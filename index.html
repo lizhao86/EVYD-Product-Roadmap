@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EVYD Product Roadmap</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ===== TOOLBAR ===== -->
+  <header class="toolbar">
+    <div class="toolbar-brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="4" x2="9" y2="9"/>
+        <rect x="7" y="13" width="4" height="2" rx="1" fill="currentColor" stroke="none"/>
+        <rect x="13" y="13" width="4" height="2" rx="1" fill="currentColor" stroke="none"/>
+        <rect x="7" y="17" width="7" height="2" rx="1" fill="currentColor" stroke="none"/>
+      </svg>
+      <h1 class="brand-title">EVYD Roadmap</h1>
+    </div>
+
+    <div class="toolbar-year">
+      <button class="year-nav-btn" id="prev-year" title="上一年">&#8249;</button>
+      <span id="year-display" class="year-label">2026</span>
+      <button class="year-nav-btn" id="next-year" title="下一年">&#8250;</button>
+    </div>
+
+    <span id="version-indicator" class="version-indicator"></span>
+
+    <div class="toolbar-actions">
+      <button class="btn-toolbar" id="btn-import">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2v8M5 7l3 3 3-3"/><rect x="2" y="11" width="12" height="3" rx="1"/>
+        </svg>
+        加载 CSV
+      </button>
+      <input type="file" id="file-input" accept=".csv" style="display:none">
+
+      <button class="btn-toolbar" id="btn-export">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 10V2M5 5l3-3 3 3"/><rect x="2" y="11" width="12" height="3" rx="1"/>
+        </svg>
+        保存
+      </button>
+
+      <button class="btn-toolbar" id="btn-download-sample">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M4 4h8M4 7h5M4 10h6"/>
+          <circle cx="12" cy="11" r="3" stroke-width="1.5"/>
+          <path d="M12 9.5v1.5l1 1" stroke-width="1.5"/>
+        </svg>
+        示例
+      </button>
+
+      <button class="btn-primary" id="btn-add">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/>
+        </svg>
+        添加条目
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== ROADMAP WRAPPER ===== -->
+  <div class="roadmap-wrapper">
+
+    <!-- Month header (sticky) -->
+    <div class="roadmap-header-row" id="months-header-row">
+      <div class="label-col header-corner">
+        <span class="corner-text">模块 / 月份</span>
+      </div>
+      <div class="months-header" id="months-header"></div>
+    </div>
+
+    <!-- Body -->
+    <div id="roadmap-body"></div>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="empty-state" style="display:none">
+      <div class="empty-icon">
+        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="8" y="12" width="48" height="44" rx="4"/>
+          <line x1="8" y1="24" x2="56" y2="24"/>
+          <line x1="20" y1="12" x2="20" y2="24"/>
+          <line x1="44" y1="12" x2="44" y2="24"/>
+          <rect x="16" y="32" width="12" height="5" rx="2"/>
+          <rect x="36" y="32" width="12" height="5" rx="2"/>
+          <rect x="16" y="42" width="20" height="5" rx="2"/>
+        </svg>
+      </div>
+      <h3 class="empty-title">还没有 Roadmap 数据</h3>
+      <p class="empty-desc">加载 CSV 文件开始使用，或直接手动添加条目</p>
+      <div class="empty-actions">
+        <button class="btn-toolbar" id="btn-import-empty">加载 CSV</button>
+        <button class="btn-primary" id="btn-add-empty">+ 添加第一个条目</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== MODAL ===== -->
+  <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-title" class="modal-title">添加条目</h2>
+        <button class="modal-close-btn" id="modal-close-btn" title="关闭">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
+      <form id="item-form" class="modal-form" autocomplete="off">
+        <div class="form-group">
+          <label class="form-label">所属模块 <span class="required">*</span></label>
+          <input class="form-input" name="module" placeholder="例：数据展示、用户增长、基础架构" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">功能 / 项目标题 <span class="required">*</span></label>
+          <input class="form-input" name="title" placeholder="例：图表组件重构" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">解决的问题 <span class="field-alias">Problem</span></label>
+          <textarea class="form-textarea" name="problem" placeholder="描述当前痛点、用户需求或背景…" rows="2"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">方案描述 <span class="field-alias">Description</span></label>
+          <textarea class="form-textarea" name="description" placeholder="具体做什么、技术路径、范围说明…" rows="2"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">预期价值 <span class="field-alias">Value</span></label>
+          <textarea class="form-textarea" name="outcome" placeholder="完成后的价值、度量指标或里程碑…" rows="2"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">需要协作的团队</label>
+          <input class="form-input" name="collaborators" placeholder="例：医学团队, 运营团队, 设计团队（逗号分隔）">
+          <span class="form-hint">多个团队用英文逗号分隔，留空表示无需外部协作</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">负责人 <span class="field-alias">Author</span></label>
+          <input class="form-input" name="author" placeholder="例：Lynn、Ned（可填多人，逗号分隔）">
+        </div>
+
+        <div class="form-row-2col">
+          <div class="form-group">
+            <label class="form-label">开始月份</label>
+            <div class="input-with-suffix">
+              <input class="form-input" name="startMonth" type="number" min="1" max="12" value="1">
+              <span class="input-suffix">月</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">持续时长</label>
+            <div class="input-with-suffix">
+              <input class="form-input" name="duration" type="number" min="1" max="12" value="1">
+              <span class="input-suffix">个月</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview bar -->
+        <div class="form-preview" id="form-preview">
+          <div class="form-preview-label">预览</div>
+          <div class="form-preview-bar-wrap">
+            <div class="form-preview-grid">
+              <div class="form-preview-bar" id="preview-bar"></div>
+              <div class="form-preview-months">
+                <span>1</span><span>2</span><span>3</span><span>4</span>
+                <span>5</span><span>6</span><span>7</span><span>8</span>
+                <span>9</span><span>10</span><span>11</span><span>12</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-danger hidden" id="btn-delete">删除条目</button>
+          <div class="footer-right">
+            <button type="button" class="btn-cancel" id="btn-cancel">取消</button>
+            <button type="submit" class="btn-primary">保存</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== TOOLTIP ===== -->
+  <div id="item-tooltip" class="item-tooltip hidden">
+    <div class="tt-header">
+      <span class="tt-module" id="tt-module"></span>
+      <span class="tt-duration" id="tt-duration"></span>
+    </div>
+    <div class="tt-title" id="tt-title"></div>
+    <div class="tt-section" id="tt-problem-wrap">
+      <div class="tt-label">解决的问题</div>
+      <div class="tt-text" id="tt-problem"></div>
+    </div>
+    <div class="tt-section" id="tt-description-wrap">
+      <div class="tt-label">方案描述</div>
+      <div class="tt-text" id="tt-description"></div>
+    </div>
+    <div class="tt-section" id="tt-outcome-wrap">
+      <div class="tt-label">预期价值</div>
+      <div class="tt-text" id="tt-outcome"></div>
+    </div>
+    <div class="tt-section tt-collab-section" id="tt-collab-wrap">
+      <div class="tt-label tt-label-collab">
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11">
+          <circle cx="5" cy="4" r="2"/><path d="M1 11c0-2.2 1.8-4 4-4"/>
+          <circle cx="9" cy="4" r="2"/><path d="M13 11c0-2.2-1.8-4-4-4"/>
+        </svg>
+        需要协作
+      </div>
+      <div class="tt-collab-chips" id="tt-collab-chips"></div>
+    </div>
+    <div class="tt-author-row hidden" id="tt-author-row">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><circle cx="7" cy="4.5" r="2.5"/><path d="M1.5 12c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/></svg>
+      <span id="tt-author"></span>
+    </div>
+    <div class="tt-hint">点击编辑 · 拖拽移动 · 右侧拖拽调整时长</div>
+  </div>
+
+  <script src="app.js?v=8"></script>
+</body>
+</html>
