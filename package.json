@@ -1,0 +1,25 @@
+{
+  "name": "evyd-product-roadmap",
+  "version": "1.0.0",
+  "description": "可视化产品 Roadmap 电子白板，纯前端实现，无需服务器，数据本地持久化。",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "npx serve .",
+    "lint": "echo \"No linter configured\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lizhao86/EVYD-Product-Roadmap.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lizhao86/EVYD-Product-Roadmap/issues"
+  },
+  "homepage": "https://github.com/lizhao86/EVYD-Product-Roadmap#readme",
+  "dependencies": {
+    "@vercel/speed-insights": "^2.0.0"
+  }
+}
