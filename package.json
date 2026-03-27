@@ -1,0 +1,19 @@
+{
+  "name": "evyd-product-roadmap",
+  "version": "1.0.0",
+  "description": "可视化产品 Roadmap 电子白板，纯前端实现，无需服务器，数据本地持久化。",
+  "scripts": {
+    "dev": "python3 -m http.server 3000",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "roadmap",
+    "product-management",
+    "visualization"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@vercel/analytics": "^1.4.1"
+  }
+}
