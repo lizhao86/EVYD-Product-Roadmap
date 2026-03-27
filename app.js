@@ -17,6 +17,14 @@ const FISCAL_START = 4;
 function toFiscalCol(calMonth) {
   return (calMonth - FISCAL_START + 12) % 12;
 }
+function fromFiscalCol(col) {
+  return ((col + FISCAL_START - 1) % 12) + 1;
+}
+// Returns the calendar year in which the current fiscal year starts (e.g. Apr 2026 → 2026)
+function getFYYear() {
+  const now = new Date();
+  return now.getMonth() + 1 >= FISCAL_START ? now.getFullYear() : now.getFullYear() - 1;
+}
 
 const MODULE_COLORS = [
   { bg: '#3B82F6', dark: '#1D4ED8', light: '#DBEAFE' },  // blue
@@ -53,19 +61,20 @@ const COLLAPSED_KEY  = 'evyd_roadmap_collapsed';
 // ============================================================
 
 let appData = {
-  year: new Date().getFullYear(),
   version: 1,
   lastModified: new Date().toISOString(),
+  moduleOrder: [],   // explicit display order of module names
   items: []
 };
 
 let moduleColorMap  = {};   // module name → color object
 let teamColorMap    = {};   // team name → hex color string
 let collapsedModules = {};  // module name → bool
-let editingItemId   = null;
-let dragState       = null; // null | { type, item, bar, startX, origValue, moved }
+let editingItemId    = null;
+let dragState        = null; // null | { type, item, bar, startX, origValue, moved }
+let moduleDragState  = null; // null | { moduleName, origIdx, targetIdx }
 let tooltipHideTimer = null;
-let lastDragMoved   = false; // persists through mouseup→click cycle
+let lastDragMoved    = false; // persists through mouseup→click cycle
 
 // ============================================================
 //  Persistence
@@ -79,9 +88,10 @@ function loadData() {
       // Ensure every item has an id (handles data that bypassed importJSON)
       appData.items.forEach(it => { if (!it.id) it.id = generateId(); });
     }
-    // Back-compat: old data without version field
+    // Back-compat: old data without version / moduleOrder fields
     if (!appData.version)      appData.version      = 1;
     if (!appData.lastModified) appData.lastModified = new Date().toISOString();
+    if (!appData.moduleOrder)  appData.moduleOrder  = [];
     const c = localStorage.getItem(COLLAPSED_KEY);
     if (c) collapsedModules = JSON.parse(c);
   } catch(e) { /* ignore */ }
@@ -106,13 +116,17 @@ function generateId() {
   return 'i_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 }
 
-/** Return unique module names in insertion order */
+/** Return unique module names, respecting explicit moduleOrder when set */
 function getModules() {
-  const seen = new Set();
-  const out  = [];
-  appData.items.forEach(item => {
-    if (!seen.has(item.module)) { seen.add(item.module); out.push(item.module); }
-  });
+  const all = [...new Set(appData.items.map(it => it.module))];
+  if (appData.moduleOrder && appData.moduleOrder.length) {
+    const ordered = appData.moduleOrder.filter(m => all.includes(m));
+    all.forEach(m => { if (!ordered.includes(m)) ordered.push(m); });
+    return ordered;
+  }
+  // Fallback: insertion order from items
+  const seen = new Set(), out = [];
+  appData.items.forEach(it => { if (!seen.has(it.module)) { seen.add(it.module); out.push(it.module); } });
   return out;
 }
 
@@ -199,9 +213,6 @@ function getColumnWidth() {
 function render() {
   rebuildColorMap();
 
-  // Update year display
-  document.getElementById('year-display').textContent = appData.year;
-
   const body    = document.getElementById('roadmap-body');
   const empty   = document.getElementById('empty-state');
   const modules = getModules();
@@ -231,7 +242,8 @@ function buildMonthHeader() {
   header.innerHTML = Array.from({length: 12}, (_, i) => {
     const calMonth = ((FISCAL_START - 1 + i) % 12) + 1; // 1-indexed
     // Highlight current month considering fiscal year wraps into next calendar year
-    const displayYear = calMonth < FISCAL_START ? appData.year + 1 : appData.year;
+    // Fiscal year wraps: months Jan–Mar belong to the next calendar year
+    const displayYear = calMonth < FISCAL_START ? curYear + 1 : curYear;
     const isCur = (displayYear === curYear && calMonth === curCalMonth);
     return `<div class="month-header-cell${isCur ? ' current-month' : ''}">${MONTHS_EN[calMonth - 1]}</div>`;
   }).join('');
@@ -252,19 +264,32 @@ function renderModule(moduleName, container) {
 
   headerRow.innerHTML = `
     <div class="label-col module-label-cell" style="border-left:3px solid ${color.bg}">
+      <span class="module-drag-handle" title="拖拽排序">⠿</span>
       <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
       <span class="module-name-text" title="${esc(moduleName)}">${esc(moduleName)}</span>
       <span class="module-badge">${items.length}</span>
+      <button class="module-rename-btn" title="重命名分类">✎</button>
     </div>
     <div class="module-header-timeline">
       ${Array.from({length:12}, (_,i) => `<div class="month-cell"></div>`).join('')}
     </div>
   `;
 
-  headerRow.querySelector('.label-col').addEventListener('click', () => {
+  const labelCell = headerRow.querySelector('.label-col');
+  labelCell.addEventListener('click', () => {
     collapsedModules[moduleName] = !collapsed;
     saveCollapsed();
     render();
+  });
+
+  headerRow.querySelector('.module-drag-handle').addEventListener('mousedown', e => {
+    e.stopPropagation();
+    startModuleDrag(e, moduleName);
+  });
+
+  headerRow.querySelector('.module-rename-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    startModuleRename(moduleName, headerRow.querySelector('.module-name-text'));
   });
 
   section.appendChild(headerRow);
@@ -278,14 +303,12 @@ function renderModule(moduleName, container) {
     itemsRow.className = 'items-row grid-row';
     itemsRow.style.height = areaHeight + 'px';
 
-    // Alt column tinting
-    const now      = new Date();
-    const curYear  = now.getFullYear();
-    const curMonth = now.getMonth();
+    // Alt column tinting — fiscal col i → calendar month via fromFiscalCol
+    const curCalMonth = new Date().getMonth() + 1; // 1-indexed
     const altCells = Array.from({length:12}, (_,i) => {
       const classes = ['month-cell'];
       if (i % 2 === 1) classes.push('alt');
-      if (appData.year === curYear && i === curMonth) classes.push('current-month-col');
+      if (fromFiscalCol(i) === curCalMonth) classes.push('current-month-col');
       return `<div class="${classes.join(' ')}"></div>`;
     }).join('');
 
@@ -312,7 +335,6 @@ function renderModule(moduleName, container) {
 
 function renderTodayLines() {
   const now = new Date();
-  if (now.getFullYear() !== appData.year) return;
 
   const calMonth  = now.getMonth() + 1;        // 1-indexed calendar month
   const day       = now.getDate();
@@ -405,19 +427,22 @@ function createBar(item, color, row) {
 // ============================================================
 
 function startDragMove(e, item, bar) {
-  const colW  = getColumnWidth();
-  const startX = e.clientX;
-  const origStart = item.startMonth;
+  const colW        = getColumnWidth();
+  const startX      = e.clientX;
+  const origCalMonth  = item.startMonth;
+  const origFiscalCol = toFiscalCol(origCalMonth);
 
-  dragState = { type: 'move', item, bar, startX, origValue: origStart, moved: false };
+  dragState = { type: 'move', item, bar, startX, origValue: origCalMonth, moved: false };
   bar.classList.add('dragging');
   document.body.style.cursor = 'grabbing';
 
   const onMove = (me) => {
     const dm = Math.round((me.clientX - startX) / colW);
     if (dm !== 0) { dragState.moved = true; lastDragMoved = true; }
-    const newStart = clamp(origStart + dm, 1, 13 - item.duration);
-    bar.style.left = (toFiscalCol(newStart) / 12 * 100).toFixed(4) + '%';
+    // Clamp in fiscal-col space so items can cross the calendar year boundary freely
+    const newFiscalCol = clamp(origFiscalCol + dm, 0, 12 - item.duration);
+    const newStart     = fromFiscalCol(newFiscalCol);
+    bar.style.left = (newFiscalCol / 12 * 100).toFixed(4) + '%';
     bar.dataset.pendingStart = newStart;
   };
 
@@ -427,8 +452,8 @@ function startDragMove(e, item, bar) {
     bar.classList.remove('dragging');
     document.body.style.cursor = '';
 
-    const newStart = parseInt(bar.dataset.pendingStart || origStart);
-    if (newStart !== origStart) {
+    const newStart = parseInt(bar.dataset.pendingStart || origCalMonth);
+    if (newStart !== origCalMonth) {
       item.startMonth = newStart;
       saveData();
       render();
@@ -722,6 +747,7 @@ function importCSV(text) {
   const rows = parseCSV(text);
   if (!rows.length) throw new Error('CSV 无有效数据行');
   appData.items = rows.map(normaliseItem);
+  appData.moduleOrder = []; // derive fresh order from import sequence
   saveData();
   render();
 }
@@ -742,7 +768,7 @@ function exportCSV() {
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
     href: url,
-    download: `roadmap_${appData.year}_v${appData.version}.csv`
+    download: `roadmap_FY${getFYYear() + 1}_v${appData.version}.csv`
   });
   a.click();
   URL.revokeObjectURL(url);
@@ -773,6 +799,109 @@ function downloadSample() {
   });
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ============================================================
+//  Module rename
+// ============================================================
+
+function startModuleRename(oldName, nameSpan) {
+  const input = document.createElement('input');
+  input.className = 'module-name-input';
+  input.value = oldName;
+  nameSpan.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    const newName = input.value.trim() || oldName;
+    if (newName === oldName) { render(); return; }
+
+    const existing = getModules();
+    const willMerge = existing.includes(newName);
+    if (willMerge && !confirm(`"${newName}" 已存在，确定将 "${oldName}" 合并进去？`)) {
+      render(); return;
+    }
+
+    appData.items.forEach(it => { if (it.module === oldName) it.module = newName; });
+
+    // Sync moduleOrder
+    if (!appData.moduleOrder) appData.moduleOrder = [...existing];
+    const idx = appData.moduleOrder.indexOf(oldName);
+    if (idx !== -1) {
+      if (willMerge) appData.moduleOrder.splice(idx, 1);
+      else           appData.moduleOrder[idx] = newName;
+    }
+
+    saveData();
+    render();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  input.blur();
+    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+  });
+  input.addEventListener('blur', finish);
+}
+
+// ============================================================
+//  Module drag reorder
+// ============================================================
+
+function startModuleDrag(e, moduleName) {
+  e.preventDefault();
+  const allMods = getModules();
+  const origIdx = allMods.indexOf(moduleName);
+  moduleDragState = { moduleName, origIdx, targetIdx: origIdx };
+
+  document.body.style.cursor = 'grabbing';
+  const draggedSection = document.querySelector(`.module-section[data-module="${CSS.escape(moduleName)}"]`);
+  if (draggedSection) draggedSection.classList.add('module-being-dragged');
+
+  const onMove = me => {
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after'));
+    const sections = [...document.querySelectorAll('.module-section')];
+    let targetIdx = allMods.length;
+    for (let i = 0; i < sections.length; i++) {
+      const rect = sections[i].getBoundingClientRect();
+      if (me.clientY < rect.top + rect.height / 2) {
+        sections[i].classList.add('drop-before');
+        targetIdx = i;
+        break;
+      }
+      if (i === sections.length - 1) sections[i].classList.add('drop-after');
+    }
+    moduleDragState.targetIdx = targetIdx;
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup',   onUp);
+    document.body.style.cursor = '';
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after', 'module-being-dragged'));
+
+    const { targetIdx } = moduleDragState;
+    moduleDragState = null;
+
+    // No-op if dropped on itself or immediately after itself
+    if (targetIdx === origIdx || targetIdx === origIdx + 1) return;
+
+    const mods = [...allMods];
+    mods.splice(origIdx, 1);
+    const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
+    mods.splice(insertAt, 0, moduleName);
+    appData.moduleOrder = mods;
+    saveData();
+    render();
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
 }
 
 // ============================================================
@@ -809,10 +938,6 @@ function init() {
   loadData();
   updateVersionIndicator();
   render();
-
-  // Year navigation
-  document.getElementById('prev-year').addEventListener('click', () => { appData.year--; saveData(); render(); });
-  document.getElementById('next-year').addEventListener('click', () => { appData.year++; saveData(); render(); });
 
   // Toolbar buttons
   document.getElementById('btn-add').addEventListener('click',             () => openModal());

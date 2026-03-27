@@ -319,6 +319,62 @@ body {
   flex-shrink: 0;
 }
 
+/* Module drag handle */
+.module-drag-handle {
+  cursor: grab;
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0.35;
+  flex-shrink: 0;
+  padding: 0 2px;
+  user-select: none;
+  transition: opacity var(--transition);
+  line-height: 1;
+}
+.module-label-cell:hover .module-drag-handle { opacity: 0.75; }
+.module-drag-handle:active { cursor: grabbing; opacity: 1; }
+
+/* Module rename button — hidden until hover */
+.module-rename-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition);
+}
+.module-label-cell:hover .module-rename-btn { display: flex; }
+.module-rename-btn:hover { background: rgba(59,130,246,.12); color: #3B82F6; }
+
+/* Inline rename input */
+.module-name-input {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: white;
+  border: 1.5px solid #3B82F6;
+  border-radius: 4px;
+  padding: 1px 6px;
+  outline: none;
+  min-width: 0;
+  font-family: inherit;
+}
+
+/* Module being dragged */
+.module-section.module-being-dragged { opacity: 0.35; pointer-events: none; }
+
+/* Drop position indicators */
+.module-section.drop-before { box-shadow: 0 -3px 0 0 #3B82F6; }
+.module-section.drop-after  { box-shadow: 0  3px 0 0 #3B82F6; }
+
 /* Module header timeline cells */
 .module-header-timeline {
   flex: 1;
