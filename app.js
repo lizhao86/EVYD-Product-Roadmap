@@ -482,7 +482,7 @@ function startDragResize(e, item, bar) {
   const onMove = (me) => {
     const dm = Math.round((me.clientX - startX) / colW);
     if (dm !== 0) { dragState.moved = true; lastDragMoved = true; }
-    const newDur = clamp(origDur + dm, 1, 13 - item.startMonth);
+    const newDur = clamp(origDur + dm, 1, 12 - toFiscalCol(item.startMonth));
     bar.style.width = (newDur / 12 * 100).toFixed(4) + '%';
     // Update duration badge
     const badge = bar.querySelector('.bar-duration');
@@ -649,7 +649,7 @@ function updatePreviewBar() {
   const form     = document.getElementById('item-form');
   const bar      = document.getElementById('preview-bar');
   const s        = clamp(parseInt(form.startMonth.value) || 1, 1, 12);
-  const d        = clamp(parseInt(form.duration.value)   || 1, 1, 13 - s);
+  const d        = clamp(parseInt(form.duration.value)   || 1, 1, 12 - toFiscalCol(s));
   const modName  = form.module.value.trim();
   const color    = modName ? (moduleColorMap[modName] || MODULE_COLORS[0]) : MODULE_COLORS[0];
 
@@ -729,7 +729,7 @@ function normaliseItem(it) {
   if (!it.description) it.description = '';
   if (!it.author)      it.author      = '';
   it.startMonth = clamp(parseInt(it.startMonth) || FISCAL_START, 1, 12);
-  it.duration   = clamp(parseInt(it.duration)   || 3,            1, 13 - it.startMonth);
+  it.duration   = clamp(parseInt(it.duration)   || 3,            1, 12 - toFiscalCol(it.startMonth));
 
   // Normalise collaborators → string[];  supports ";", "," separators, ignores "-"
   if (Array.isArray(it.collaborators)) {
@@ -987,7 +987,7 @@ function init() {
     e.preventDefault();
     const form       = e.target;
     const startMonth = clamp(parseInt(form.startMonth.value) || 1, 1, 12);
-    const duration   = clamp(parseInt(form.duration.value)   || 1, 1, 13 - startMonth);
+    const duration   = clamp(parseInt(form.duration.value)   || 1, 1, 12 - toFiscalCol(startMonth));
 
     // Parse collaborators from comma-separated input
     const collaboratorsRaw = form.collaborators.value.trim();
