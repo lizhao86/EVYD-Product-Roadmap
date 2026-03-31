@@ -697,6 +697,19 @@ function parseCSV(text) {
   }).filter(obj => Object.values(obj).some(v => v)); // skip blank rows
 }
 
+// Encode a CSV string as UTF-16 LE with BOM — works with all Excel/WPS versions on Windows
+function csvToBlob(csvText) {
+  // UTF-16 LE BOM = FF FE; each JS char becomes 2 bytes (little-endian)
+  const buf  = new ArrayBuffer(2 + csvText.length * 2);
+  const view = new DataView(buf);
+  view.setUint8(0, 0xFF);
+  view.setUint8(1, 0xFE);
+  for (let i = 0; i < csvText.length; i++) {
+    view.setUint16(2 + i * 2, csvText.charCodeAt(i), true);
+  }
+  return new Blob([buf], { type: 'text/csv;charset=utf-16le' });
+}
+
 // Wrap a value for CSV export — quotes if it contains comma, quote, or newline
 function csvCell(v) {
   const s = String(v == null ? '' : v);
@@ -763,8 +776,7 @@ function exportCSV() {
       return csvCell(v);
     }).join(','))
   ];
-  const csv  = '\uFEFF' + rows.join('\r\n'); // BOM for Excel
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const blob = csvToBlob(rows.join('\r\n'));
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
     href: url,
@@ -790,8 +802,7 @@ function downloadSample() {
     HEADERS.join(','),
     ...items.map(it => HEADERS.map(h => csvCell(it[h] ?? '')).join(','))
   ];
-  const csv  = '\uFEFF' + rows.join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const blob = csvToBlob(rows.join('\r\n'));
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
     href: url,
