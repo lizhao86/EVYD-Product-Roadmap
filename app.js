@@ -765,6 +765,34 @@ function importCSV(text) {
   render();
 }
 
+function importCSVAppend(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) throw new Error('CSV 无有效数据行');
+  const newItems = rows.map(normaliseItem);
+  appData.items = appData.items.concat(newItems);
+  saveData();
+  render();
+}
+
+// Decode a File/Blob respecting UTF-16 LE and UTF-8 BOM
+function readCSVFile(file, callback) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const buf   = ev.target.result;
+    const bytes = new Uint8Array(buf);
+    let text;
+    if (bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      text = new TextDecoder('utf-16le').decode(new Uint8Array(buf, 2));
+    } else if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      text = new TextDecoder('utf-8').decode(new Uint8Array(buf, 3));
+    } else {
+      text = new TextDecoder('utf-8').decode(buf);
+    }
+    callback(text);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function exportCSV() {
   const HEADERS = ['author','module','problem','title','description','outcome','collaborators','startMonth','duration'];
   const rows = [
@@ -953,6 +981,7 @@ function init() {
   // Toolbar buttons
   document.getElementById('btn-add').addEventListener('click',             () => openModal());
   document.getElementById('btn-import').addEventListener('click',          () => document.getElementById('file-input').click());
+  document.getElementById('btn-import-append').addEventListener('click',   () => document.getElementById('file-input-append').click());
   document.getElementById('btn-export').addEventListener('click',          exportCSV);
   document.getElementById('btn-download-sample').addEventListener('click', downloadSample);
 
@@ -960,19 +989,25 @@ function init() {
   document.getElementById('btn-import-empty').addEventListener('click',    () => document.getElementById('file-input').click());
   document.getElementById('btn-add-empty').addEventListener('click',       () => openModal());
 
-  // File input
+  // File input — full overwrite
   document.getElementById('file-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        importCSV(ev.target.result);
-      } catch(err) {
-        alert('加载失败：' + err.message + '\n\n请确保文件为 CSV 格式，可下载「示例」参考结构。');
-      }
-    };
-    reader.readAsText(file, 'UTF-8');
+    readCSVFile(file, (text) => {
+      try { importCSV(text); }
+      catch(err) { alert('加载失败：' + err.message + '\n\n请确保文件为 CSV 格式，可下载「示例」参考结构。'); }
+    });
+    e.target.value = '';
+  });
+
+  // File input — incremental append
+  document.getElementById('file-input-append').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    readCSVFile(file, (text) => {
+      try { importCSVAppend(text); }
+      catch(err) { alert('增量导入失败：' + err.message); }
+    });
     e.target.value = '';
   });
 

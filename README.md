@@ -20,7 +20,10 @@ python3 -m http.server 3000
 - 模块可重命名、合并、拖拽排序
 - 点击条形编辑/删除
 - 悬停显示详情 tooltip
-- 导入 / 导出 CSV（UTF-16 LE 编码，兼容 Windows Excel / WPS 直接双击打开，不乱码）
+- **加载 CSV**：全量替换当前数据
+- **增量导入**：追加 CSV 内容，不覆盖已有条目
+- 导出 CSV（UTF-16 LE 编码，兼容 Windows Excel / WPS 直接双击打开，不乱码）
+- 导入支持自动识别 UTF-16 LE / UTF-8 BOM / UTF-8 编码，导出后可直接重新导入
 - 数据存储于 localStorage，刷新不丢失
 
 ## CSV 数据格式
