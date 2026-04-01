@@ -64,17 +64,24 @@ let appData = {
   version: 1,
   lastModified: new Date().toISOString(),
   moduleOrder: [],   // explicit display order of module names
+  pillarOrder: [],   // explicit display order of pillar names
   items: []
 };
 
 let moduleColorMap  = {};   // module name → color object
+let pillarColorMap  = {};   // pillar name → color object
 let teamColorMap    = {};   // team name → hex color string
-let collapsedModules = {};  // module name → bool
+let collapsedModules = {};  // module/pillar key → bool
 let editingItemId    = null;
 let dragState        = null; // null | { type, item, bar, startX, origValue, moved }
 let moduleDragState  = null; // null | { moduleName, origIdx, targetIdx }
 let tooltipHideTimer = null;
 let lastDragMoved    = false; // persists through mouseup→click cycle
+
+// View & filter state
+let activeView    = 'module';   // 'module' | 'pillar'
+let filterAuthors = new Set();  // selected author filter values
+let filterTeams   = new Set();  // selected team filter values
 
 // ============================================================
 //  Persistence
@@ -92,6 +99,7 @@ function loadData() {
     if (!appData.version)      appData.version      = 1;
     if (!appData.lastModified) appData.lastModified = new Date().toISOString();
     if (!appData.moduleOrder)  appData.moduleOrder  = [];
+    if (!appData.pillarOrder)  appData.pillarOrder  = [];
     const c = localStorage.getItem(COLLAPSED_KEY);
     if (c) collapsedModules = JSON.parse(c);
   } catch(e) { /* ignore */ }
@@ -117,8 +125,9 @@ function generateId() {
 }
 
 /** Return unique module names, respecting explicit moduleOrder when set */
-function getModules() {
-  const all = [...new Set(appData.items.map(it => it.module))];
+function getModules(items) {
+  const src = items || appData.items;
+  const all = [...new Set(src.map(it => it.module))];
   if (appData.moduleOrder && appData.moduleOrder.length) {
     const ordered = appData.moduleOrder.filter(m => all.includes(m));
     all.forEach(m => { if (!ordered.includes(m)) ordered.push(m); });
@@ -126,21 +135,46 @@ function getModules() {
   }
   // Fallback: insertion order from items
   const seen = new Set(), out = [];
-  appData.items.forEach(it => { if (!seen.has(it.module)) { seen.add(it.module); out.push(it.module); } });
+  src.forEach(it => { if (!seen.has(it.module)) { seen.add(it.module); out.push(it.module); } });
   return out;
 }
 
-/** Auto-assign colors per module (stable within a session) */
+/** Return unique pillar names, respecting explicit pillarOrder when set */
+function getPillars(items) {
+  const src = items || appData.items;
+  const all = [...new Set(src.map(it => it.pillar || '未分配'))];
+  if (appData.pillarOrder && appData.pillarOrder.length) {
+    const ordered = appData.pillarOrder.filter(p => all.includes(p));
+    all.forEach(p => { if (!ordered.includes(p)) ordered.push(p); });
+    return ordered;
+  }
+  const seen = new Set(), out = [];
+  src.forEach(it => {
+    const p = it.pillar || '未分配';
+    if (!seen.has(p)) { seen.add(p); out.push(p); }
+  });
+  return out;
+}
+
+/** Auto-assign colors per module and per pillar (stable within a session) */
 function rebuildColorMap() {
   moduleColorMap = {};
   getModules().forEach((m, i) => {
     moduleColorMap[m] = MODULE_COLORS[i % MODULE_COLORS.length];
+  });
+  pillarColorMap = {};
+  getPillars().forEach((p, i) => {
+    pillarColorMap[p] = MODULE_COLORS[i % MODULE_COLORS.length];
   });
   rebuildTeamColorMap();
 }
 
 function getModuleColor(moduleName) {
   return moduleColorMap[moduleName] || MODULE_COLORS[0];
+}
+
+function getPillarColor(pillarName) {
+  return pillarColorMap[pillarName] || MODULE_COLORS[0];
 }
 
 /**
@@ -194,6 +228,75 @@ function packRows(items) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+/** Return items filtered by active author/team filters */
+function getFilteredItems() {
+  return appData.items.filter(item => {
+    if (filterAuthors.size > 0) {
+      const authors = String(item.author || '').split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      if (!authors.some(a => filterAuthors.has(a))) return false;
+    }
+    if (filterTeams.size > 0) {
+      const teams = Array.isArray(item.collaborators) ? item.collaborators : [];
+      if (!teams.some(t => filterTeams.has(t))) return false;
+    }
+    return true;
+  });
+}
+
+/** Rebuild filter panel HTML and update badges/tab states */
+function refreshFilterUI() {
+  // Collect all unique authors from ALL items (not filtered)
+  const allAuthors = new Set();
+  appData.items.forEach(it => {
+    String(it.author || '').split(/[,;]/).map(s => s.trim()).filter(Boolean).forEach(a => allAuthors.add(a));
+  });
+
+  // Collect all unique teams from teamColorMap (built from ALL items)
+  const allTeams = new Set(Object.keys(teamColorMap));
+
+  // Rebuild author panel
+  const authorPanel = document.getElementById('filter-author-panel');
+  if (authorPanel) {
+    const sorted = [...allAuthors].sort();
+    if (sorted.length === 0) {
+      authorPanel.innerHTML = '<div class="filter-empty-hint">暂无数据</div>';
+    } else {
+      authorPanel.innerHTML =
+        sorted.map(a => `<label class="filter-option"><input type="checkbox" value="${esc(a)}"${filterAuthors.has(a) ? ' checked' : ''}>${esc(a)}</label>`).join('') +
+        (filterAuthors.size > 0 ? '<div class="filter-panel-actions"><button class="filter-clear" data-target="author">清除筛选</button></div>' : '');
+    }
+  }
+
+  // Rebuild team panel
+  const teamPanel = document.getElementById('filter-team-panel');
+  if (teamPanel) {
+    const sorted = [...allTeams].sort();
+    if (sorted.length === 0) {
+      teamPanel.innerHTML = '<div class="filter-empty-hint">暂无数据</div>';
+    } else {
+      teamPanel.innerHTML =
+        sorted.map(t => `<label class="filter-option"><input type="checkbox" value="${esc(t)}"${filterTeams.has(t) ? ' checked' : ''}>${esc(t)}</label>`).join('') +
+        (filterTeams.size > 0 ? '<div class="filter-panel-actions"><button class="filter-clear" data-target="team">清除筛选</button></div>' : '');
+    }
+  }
+
+  // Update badges and active state
+  const authorCount = document.getElementById('filter-author-count');
+  const authorBtn   = document.getElementById('filter-author-btn');
+  if (authorCount) { authorCount.textContent = filterAuthors.size; authorCount.classList.toggle('hidden', filterAuthors.size === 0); }
+  if (authorBtn)   authorBtn.classList.toggle('active', filterAuthors.size > 0);
+
+  const teamCount = document.getElementById('filter-team-count');
+  const teamBtn   = document.getElementById('filter-team-btn');
+  if (teamCount) { teamCount.textContent = filterTeams.size; teamCount.classList.toggle('hidden', filterTeams.size === 0); }
+  if (teamBtn)   teamBtn.classList.toggle('active', filterTeams.size > 0);
+
+  // Update view tabs
+  document.querySelectorAll('.view-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === activeView);
+  });
+}
+
 // ============================================================
 //  Column width helper
 // ============================================================
@@ -213,23 +316,40 @@ function getColumnWidth() {
 function render() {
   rebuildColorMap();
 
-  const body    = document.getElementById('roadmap-body');
-  const empty   = document.getElementById('empty-state');
-  const modules = getModules();
+  const body  = document.getElementById('roadmap-body');
+  const empty = document.getElementById('empty-state');
 
-  // Rebuild month header (current-month highlight)
   buildMonthHeader();
 
-  if (modules.length === 0) {
+  if (appData.items.length === 0) {
     body.innerHTML = '';
     empty.style.display = 'flex';
+    refreshFilterUI();
     return;
   }
   empty.style.display = 'none';
   body.innerHTML = '';
 
-  modules.forEach(moduleName => renderModule(moduleName, body));
+  // Update corner text based on active view
+  const cornerEl = document.getElementById('corner-text');
+  if (cornerEl) cornerEl.textContent = activeView === 'pillar' ? 'Pillar / 月份' : '模块 / 月份';
+
+  const filtered = getFilteredItems();
+
+  if (activeView === 'pillar') {
+    getPillars(filtered).forEach(pillarName => {
+      const pillarItems = filtered.filter(it => (it.pillar || '未分配') === pillarName);
+      renderPillarSection(pillarName, pillarItems, body);
+    });
+  } else {
+    getModules(filtered).forEach(moduleName => {
+      const moduleItems = filtered.filter(it => it.module === moduleName);
+      renderModule(moduleName, moduleItems, body);
+    });
+  }
+
   renderTodayLines();
+  refreshFilterUI();
 }
 
 function buildMonthHeader() {
@@ -249,8 +369,7 @@ function buildMonthHeader() {
   }).join('');
 }
 
-function renderModule(moduleName, container) {
-  const items    = appData.items.filter(it => it.module === moduleName);
+function renderModule(moduleName, items, container) {
   const color    = getModuleColor(moduleName);
   const collapsed = !!collapsedModules[moduleName];
 
@@ -331,6 +450,188 @@ function renderModule(moduleName, container) {
   }
 
   container.appendChild(section);
+}
+
+// ============================================================
+//  Pillar view rendering
+// ============================================================
+
+function renderPillarSection(pillarName, items, container) {
+  const color    = getPillarColor(pillarName);
+  const colKey   = '__pillar__' + pillarName;
+  const collapsed = !!collapsedModules[colKey];
+
+  const section = document.createElement('div');
+  section.className = 'module-section';
+  section.dataset.pillar = pillarName;
+
+  const headerRow = document.createElement('div');
+  headerRow.className = 'module-header-row grid-row';
+
+  headerRow.innerHTML = `
+    <div class="label-col module-label-cell" style="border-left:3px solid ${color.bg}">
+      <span class="module-drag-handle pillar-drag-handle" title="拖拽排序">⠿</span>
+      <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
+      <span class="module-name-text" title="${esc(pillarName)}">${esc(pillarName)}</span>
+      <span class="module-badge">${items.length}</span>
+      <button class="module-rename-btn" title="重命名 Pillar">✎</button>
+    </div>
+    <div class="module-header-timeline">
+      ${Array.from({length:12}, () => `<div class="month-cell"></div>`).join('')}
+    </div>
+  `;
+
+  const labelCell = headerRow.querySelector('.label-col');
+  labelCell.addEventListener('click', () => {
+    collapsedModules[colKey] = !collapsed;
+    saveCollapsed();
+    render();
+  });
+
+  headerRow.querySelector('.pillar-drag-handle').addEventListener('mousedown', e => {
+    e.stopPropagation();
+    startPillarDrag(e, pillarName);
+  });
+
+  headerRow.querySelector('.module-rename-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    startPillarRename(pillarName, headerRow.querySelector('.module-name-text'));
+  });
+
+  section.appendChild(headerRow);
+
+  if (!collapsed) {
+    const { rows: itemRowMap, rowCount } = packRows(items);
+    const areaHeight = rowCount * ROW_HEIGHT + 8;
+
+    const itemsRow = document.createElement('div');
+    itemsRow.className = 'items-row grid-row';
+    itemsRow.style.height = areaHeight + 'px';
+
+    const curCalMonth = new Date().getMonth() + 1;
+    const altCells = Array.from({length:12}, (_,i) => {
+      const classes = ['month-cell'];
+      if (i % 2 === 1) classes.push('alt');
+      if (fromFiscalCol(i) === curCalMonth) classes.push('current-month-col');
+      return `<div class="${classes.join(' ')}"></div>`;
+    }).join('');
+
+    itemsRow.innerHTML = `
+      <div class="label-col items-label-col"></div>
+      <div class="items-timeline">
+        <div class="month-cells-bg">${altCells}</div>
+        <div class="items-layer"></div>
+      </div>
+    `;
+
+    const layer = itemsRow.querySelector('.items-layer');
+
+    items.forEach(item => {
+      const row      = itemRowMap[item.id] ?? 0;
+      // In pillar view bars use module color so module identity is preserved
+      const barColor = getModuleColor(item.module);
+      layer.appendChild(createBar(item, barColor, row));
+    });
+
+    section.appendChild(itemsRow);
+  }
+
+  container.appendChild(section);
+}
+
+function startPillarDrag(e, pillarName) {
+  e.preventDefault();
+  const allPillars = getPillars();
+  const origIdx    = allPillars.indexOf(pillarName);
+  moduleDragState  = { moduleName: pillarName, origIdx, targetIdx: origIdx };
+
+  document.body.style.cursor = 'grabbing';
+  const draggedSection = document.querySelector(`.module-section[data-pillar="${CSS.escape(pillarName)}"]`);
+  if (draggedSection) draggedSection.classList.add('module-being-dragged');
+
+  const onMove = me => {
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after'));
+    const sections = [...document.querySelectorAll('.module-section')];
+    let targetIdx = allPillars.length;
+    for (let i = 0; i < sections.length; i++) {
+      const rect = sections[i].getBoundingClientRect();
+      if (me.clientY < rect.top + rect.height / 2) {
+        sections[i].classList.add('drop-before');
+        targetIdx = i;
+        break;
+      }
+      if (i === sections.length - 1) sections[i].classList.add('drop-after');
+    }
+    moduleDragState.targetIdx = targetIdx;
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup',   onUp);
+    document.body.style.cursor = '';
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after', 'module-being-dragged'));
+
+    const { targetIdx } = moduleDragState;
+    moduleDragState = null;
+
+    if (targetIdx === origIdx || targetIdx === origIdx + 1) return;
+
+    const pillars = [...allPillars];
+    pillars.splice(origIdx, 1);
+    const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
+    pillars.splice(insertAt, 0, pillarName);
+    appData.pillarOrder = pillars;
+    saveData();
+    render();
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
+}
+
+function startPillarRename(oldName, nameSpan) {
+  const input = document.createElement('input');
+  input.className = 'module-name-input';
+  input.value = oldName;
+  nameSpan.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    const newName = input.value.trim() || oldName;
+    if (newName === oldName) { render(); return; }
+
+    const existing = getPillars();
+    const willMerge = existing.includes(newName);
+    if (willMerge && !confirm(`"${newName}" 已存在，确定将 "${oldName}" 合并进去？`)) {
+      render(); return;
+    }
+
+    appData.items.forEach(it => {
+      if ((it.pillar || '未分配') === oldName) it.pillar = newName === '未分配' ? '' : newName;
+    });
+
+    if (!appData.pillarOrder) appData.pillarOrder = [...existing];
+    const idx = appData.pillarOrder.indexOf(oldName);
+    if (idx !== -1) {
+      if (willMerge) appData.pillarOrder.splice(idx, 1);
+      else           appData.pillarOrder[idx] = newName;
+    }
+
+    saveData();
+    render();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  input.blur();
+    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+  });
+  input.addEventListener('blur', finish);
 }
 
 function renderTodayLines() {
@@ -617,6 +918,7 @@ function openModal(itemId = null) {
     if (!it) return;
     title.textContent        = '编辑条目';
     form.module.value        = it.module;
+    form.pillar.value        = it.pillar       || '';
     form.title.value         = it.title;
     form.problem.value       = it.problem      || '';
     form.description.value   = it.description  || '';
@@ -726,6 +1028,7 @@ function csvCell(v) {
 function normaliseItem(it) {
   // Accept common alias column names
   if (!it.module      && it.Module)      it.module      = it.Module;
+  if (!it.pillar      && it.Pillar)      it.pillar      = it.Pillar;
   if (!it.title       && it.Function)    it.title       = it.Function;
   if (!it.problem     && it.Problem)     it.problem     = it.Problem;
   if (!it.description && it.Description) it.description = it.Description;
@@ -738,6 +1041,7 @@ function normaliseItem(it) {
 
   if (!it.id)          it.id          = generateId();
   if (!it.module)      it.module      = '未分类';
+  if (!it.pillar)      it.pillar      = '';
   if (!it.title)       it.title       = '未命名';
   if (!it.description) it.description = '';
   if (!it.author)      it.author      = '';
@@ -794,7 +1098,7 @@ function readCSVFile(file, callback) {
 }
 
 function exportCSV() {
-  const HEADERS = ['author','module','problem','title','description','outcome','collaborators','startMonth','duration'];
+  const HEADERS = ['author','module','pillar','problem','title','description','outcome','collaborators','startMonth','duration'];
   const rows = [
     HEADERS.join(','),
     ...appData.items.map(it => HEADERS.map(h => {
@@ -815,16 +1119,16 @@ function exportCSV() {
 }
 
 function downloadSample() {
-  const HEADERS = ['author','module','problem','title','description','outcome','collaborators','startMonth','duration'];
+  const HEADERS = ['author','module','pillar','problem','title','description','outcome','collaborators','startMonth','duration'];
   const items = [
-    { module: '健康管理',  title: 'Routines 减重计划',  problem: '用户缺乏科学减重方案，依从性低',       description: '设计基于目标体重的阶段性打卡计划，结合 AI 动态调整运动与饮食建议',  outcome: '30天留存提升25%，减重打卡完成率≥70%',  collaborators: '医学团队;内容团队',  author: 'Lynn',     startMonth: 4,  duration: 3 },
-    { module: '健康管理',  title: '营养餐食推荐引擎',   problem: '通用食谱不满足个体差异',              description: '基于用户健康档案、过敏史和偏好构建个性化食谱推荐模型',              outcome: '个性化推荐满意度≥4.2分',              collaborators: '医学团队;数据团队',  author: 'Ned',      startMonth: 7,  duration: 2 },
-    { module: '本地活动',  title: '文莱 QR Code 寻宝', problem: '缺乏线下互动，用户活跃度低',           description: '在文莱核心商圈布置实体 QR 码任务点，用户扫码解锁奖励与健康内容',    outcome: '活动期间 DAU 提升40%',                collaborators: 'Ops Team;市场团队', author: 'Lynn',     startMonth: 5,  duration: 2 },
-    { module: '本地活动',  title: '线下合作商户接入',   problem: '无本地商户生态，变现路径单一',          description: '搭建商户入驻平台，支持优惠券核销、积分兑换与联合营销活动管理',        outcome: '接入≥50家商户，GMV+100K/月',          collaborators: 'Ops Team;商务团队', author: 'Ned;Lynn', startMonth: 8,  duration: 3 },
-    { module: '用户增长',  title: '注册转化漏斗优化',   problem: '注册流程繁琐，中途流失率达40%',        description: '精简注册步骤至3步以内，引入手机号一键授权与渐进式资料完善机制',        outcome: '注册转化率提升20%',                   collaborators: '',                  author: 'Lynn',     startMonth: 4,  duration: 2 },
-    { module: '用户增长',  title: '推荐裂变系统',       problem: '缺乏病毒传播机制',                   description: '设计邀请有礼玩法，新用户完成首次健康打卡后双方均获得会员权益',        outcome: '月新增用户提升15%',                   collaborators: '市场团队',           author: 'Ned',      startMonth: 7,  duration: 3 },
-    { module: '基础架构',  title: 'API 网关升级',       problem: '旧网关无法支撑高并发，运维成本高',     description: '迁移至云原生 API 网关，接入限流熔断、灰度发布与全链路监控能力',        outcome: '吞吐量提升3倍，故障率降低70%',         collaborators: '运维团队',           author: 'Lynn',     startMonth: 4,  duration: 2 },
-    { module: '基础架构',  title: '多租户权限体系',     problem: '权限管理混乱，安全合规风险高',         description: '重构 RBAC 权限模型，支持角色继承与接口级授权，满足 PDPA 审计要求',  outcome: '权限粒度细化至接口级，满足 PDPA 合规', collaborators: '法务团队;安全团队',  author: 'Ned',      startMonth: 9,  duration: 4 },
+    { module: '健康管理',  pillar: '用户健康体验',   title: 'Routines 减重计划',  problem: '用户缺乏科学减重方案，依从性低',       description: '设计基于目标体重的阶段性打卡计划，结合 AI 动态调整运动与饮食建议',  outcome: '30天留存提升25%，减重打卡完成率≥70%',  collaborators: '医学团队;内容团队',  author: 'Lynn',     startMonth: 4,  duration: 3 },
+    { module: '健康管理',  pillar: '用户健康体验',   title: '营养餐食推荐引擎',   problem: '通用食谱不满足个体差异',              description: '基于用户健康档案、过敏史和偏好构建个性化食谱推荐模型',              outcome: '个性化推荐满意度≥4.2分',              collaborators: '医学团队;数据团队',  author: 'Ned',      startMonth: 7,  duration: 2 },
+    { module: '本地活动',  pillar: '本地化增长',     title: '文莱 QR Code 寻宝', problem: '缺乏线下互动，用户活跃度低',           description: '在文莱核心商圈布置实体 QR 码任务点，用户扫码解锁奖励与健康内容',    outcome: '活动期间 DAU 提升40%',                collaborators: 'Ops Team;市场团队', author: 'Lynn',     startMonth: 5,  duration: 2 },
+    { module: '本地活动',  pillar: '本地化增长',     title: '线下合作商户接入',   problem: '无本地商户生态，变现路径单一',          description: '搭建商户入驻平台，支持优惠券核销、积分兑换与联合营销活动管理',        outcome: '接入≥50家商户，GMV+100K/月',          collaborators: 'Ops Team;商务团队', author: 'Ned;Lynn', startMonth: 8,  duration: 3 },
+    { module: '用户增长',  pillar: '本地化增长',     title: '注册转化漏斗优化',   problem: '注册流程繁琐，中途流失率达40%',        description: '精简注册步骤至3步以内，引入手机号一键授权与渐进式资料完善机制',        outcome: '注册转化率提升20%',                   collaborators: '',                  author: 'Lynn',     startMonth: 4,  duration: 2 },
+    { module: '用户增长',  pillar: '本地化增长',     title: '推荐裂变系统',       problem: '缺乏病毒传播机制',                   description: '设计邀请有礼玩法，新用户完成首次健康打卡后双方均获得会员权益',        outcome: '月新增用户提升15%',                   collaborators: '市场团队',           author: 'Ned',      startMonth: 7,  duration: 3 },
+    { module: '基础架构',  pillar: '平台可靠性',     title: 'API 网关升级',       problem: '旧网关无法支撑高并发，运维成本高',     description: '迁移至云原生 API 网关，接入限流熔断、灰度发布与全链路监控能力',        outcome: '吞吐量提升3倍，故障率降低70%',         collaborators: '运维团队',           author: 'Lynn',     startMonth: 4,  duration: 2 },
+    { module: '基础架构',  pillar: '平台可靠性',     title: '多租户权限体系',     problem: '权限管理混乱，安全合规风险高',         description: '重构 RBAC 权限模型，支持角色继承与接口级授权，满足 PDPA 审计要求',  outcome: '权限粒度细化至接口级，满足 PDPA 合规', collaborators: '法务团队;安全团队',  author: 'Ned',      startMonth: 9,  duration: 4 },
   ];
   const rows = [
     HEADERS.join(','),
@@ -1044,6 +1348,7 @@ function init() {
     if (editingItemId) {
       const it          = appData.items.find(i => i.id === editingItemId);
       it.module         = form.module.value.trim()       || '未分类';
+      it.pillar         = form.pillar.value.trim();
       it.title          = form.title.value.trim()        || '未命名';
       it.problem        = form.problem.value.trim();
       it.description    = form.description.value.trim();
@@ -1056,6 +1361,7 @@ function init() {
       appData.items.push({
         id:            generateId(),
         module:        form.module.value.trim()      || '未分类',
+        pillar:        form.pillar.value.trim(),
         title:         form.title.value.trim()       || '未命名',
         problem:       form.problem.value.trim(),
         description:   form.description.value.trim(),
@@ -1088,6 +1394,74 @@ function init() {
 
   // Hide tooltip when scrolling
   document.querySelector('.roadmap-wrapper').addEventListener('scroll', hideTooltip, { passive: true });
+
+  // ---- View switcher ----
+  document.getElementById('view-tabs').addEventListener('click', e => {
+    const tab = e.target.closest('.view-tab');
+    if (!tab) return;
+    activeView = tab.dataset.view;
+    render();
+  });
+
+  // ---- Filter button toggles ----
+  function togglePanel(panelId) {
+    const panel = document.getElementById(panelId);
+    const isHidden = panel.classList.contains('hidden');
+    document.querySelectorAll('.filter-dropdown-panel').forEach(p => p.classList.add('hidden'));
+    if (isHidden) panel.classList.remove('hidden');
+  }
+
+  document.getElementById('filter-author-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    togglePanel('filter-author-panel');
+  });
+
+  document.getElementById('filter-team-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    togglePanel('filter-team-panel');
+  });
+
+  // Close panels when clicking outside
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.filter-dropdown-panel').forEach(p => p.classList.add('hidden'));
+  });
+
+  // Prevent panel clicks from closing the panel
+  document.querySelectorAll('.filter-dropdown-panel').forEach(p => {
+    p.addEventListener('click', e => e.stopPropagation());
+  });
+
+  // Filter checkbox changes (delegated — survives innerHTML rebuilds)
+  document.getElementById('filter-author-panel').addEventListener('change', e => {
+    if (e.target.type === 'checkbox') {
+      if (e.target.checked) filterAuthors.add(e.target.value);
+      else filterAuthors.delete(e.target.value);
+      render();
+    }
+  });
+
+  document.getElementById('filter-team-panel').addEventListener('change', e => {
+    if (e.target.type === 'checkbox') {
+      if (e.target.checked) filterTeams.add(e.target.value);
+      else filterTeams.delete(e.target.value);
+      render();
+    }
+  });
+
+  // Clear filter buttons (delegated)
+  document.getElementById('filter-author-panel').addEventListener('click', e => {
+    if (e.target.classList.contains('filter-clear')) {
+      filterAuthors.clear();
+      render();
+    }
+  });
+
+  document.getElementById('filter-team-panel').addEventListener('click', e => {
+    if (e.target.classList.contains('filter-clear')) {
+      filterTeams.clear();
+      render();
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
