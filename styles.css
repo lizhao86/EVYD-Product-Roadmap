@@ -1071,7 +1071,7 @@ body {
   padding: 0 16px;
   gap: 12px;
   flex-shrink: 0;
-  z-index: 40;
+  z-index: 60;
   position: relative;
 }
 
