@@ -999,17 +999,11 @@ function parseCSV(text) {
   }).filter(obj => Object.values(obj).some(v => v)); // skip blank rows
 }
 
-// Encode a CSV string as UTF-16 LE with BOM — works with all Excel/WPS versions on Windows
+// Encode a CSV string as UTF-8 with BOM — compatible with Excel on both Mac and Windows
 function csvToBlob(csvText) {
-  // UTF-16 LE BOM = FF FE; each JS char becomes 2 bytes (little-endian)
-  const buf  = new ArrayBuffer(2 + csvText.length * 2);
-  const view = new DataView(buf);
-  view.setUint8(0, 0xFF);
-  view.setUint8(1, 0xFE);
-  for (let i = 0; i < csvText.length; i++) {
-    view.setUint16(2 + i * 2, csvText.charCodeAt(i), true);
-  }
-  return new Blob([buf], { type: 'text/csv;charset=utf-16le' });
+  // UTF-8 BOM = EF BB BF; tells Excel to interpret the file as UTF-8
+  const bom = '\uFEFF';
+  return new Blob([bom + csvText], { type: 'text/csv;charset=utf-8' });
 }
 
 // Wrap a value for CSV export — quotes if it contains comma, quote, or newline
