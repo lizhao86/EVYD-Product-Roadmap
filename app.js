@@ -26,6 +26,12 @@ function getFYYear() {
   return now.getMonth() + 1 >= FISCAL_START ? now.getFullYear() : now.getFullYear() - 1;
 }
 
+const DEV_TYPE_CONFIG = {
+  'New Contract': { abbr: 'NC',   bg: '#10B981', fg: '#fff' },
+  'R&D':          { abbr: 'R&D',  bg: '#8B5CF6', fg: '#fff' },
+  'Maintenance':  { abbr: 'Mnt',  bg: '#F97316', fg: '#fff' },
+};
+
 const MODULE_COLORS = [
   { bg: '#3B82F6', dark: '#1D4ED8', light: '#DBEAFE' },  // blue
   { bg: '#06B6D4', dark: '#0E7490', light: '#CFFAFE' },  // cyan
@@ -55,6 +61,7 @@ const ROW_HEIGHT     = 64;   // px per packed row (tall enough for 2-line bars)
 const BAR_PADDING    = 6;    // px gap above/below bar in its row slot
 const STORAGE_KEY    = 'evyd_roadmap_data';
 const COLLAPSED_KEY  = 'evyd_roadmap_collapsed';
+const LABEL_WIDTH_KEY = 'evyd_roadmap_label_width';
 
 // ============================================================
 //  State
@@ -65,11 +72,13 @@ let appData = {
   lastModified: new Date().toISOString(),
   moduleOrder: [],   // explicit display order of module names
   pillarOrder: [],   // explicit display order of pillar names
+  projectOrder: [],  // explicit display order of project names
   items: []
 };
 
 let moduleColorMap  = {};   // module name → color object
 let pillarColorMap  = {};   // pillar name → color object
+let projectColorMap = {};   // project name → color object
 let teamColorMap    = {};   // team name → hex color string
 let collapsedModules = {};  // module/pillar key → bool
 let editingItemId    = null;
@@ -79,9 +88,10 @@ let tooltipHideTimer = null;
 let lastDragMoved    = false; // persists through mouseup→click cycle
 
 // View & filter state
-let activeView    = 'module';   // 'module' | 'pillar'
-let filterAuthors = new Set();  // selected author filter values
-let filterTeams   = new Set();  // selected team filter values
+let activeView      = 'value';    // 'value' | 'project'
+let filterAuthors   = new Set();  // selected author filter values
+let filterTeams     = new Set();  // selected team filter values
+let filterDevTypes  = new Set();  // selected dev type filter values
 
 // ============================================================
 //  Persistence
@@ -100,6 +110,7 @@ function loadData() {
     if (!appData.lastModified) appData.lastModified = new Date().toISOString();
     if (!appData.moduleOrder)  appData.moduleOrder  = [];
     if (!appData.pillarOrder)  appData.pillarOrder  = [];
+    if (!appData.projectOrder) appData.projectOrder = [];
     const c = localStorage.getItem(COLLAPSED_KEY);
     if (c) collapsedModules = JSON.parse(c);
   } catch(e) { /* ignore */ }
@@ -156,7 +167,24 @@ function getPillars(items) {
   return out;
 }
 
-/** Auto-assign colors per module and per pillar (stable within a session) */
+/** Return unique project names, respecting explicit projectOrder when set */
+function getProjects(items) {
+  const src = items || appData.items;
+  const all = [...new Set(src.map(it => it.project || '未分配'))];
+  if (appData.projectOrder && appData.projectOrder.length) {
+    const ordered = appData.projectOrder.filter(p => all.includes(p));
+    all.forEach(p => { if (!ordered.includes(p)) ordered.push(p); });
+    return ordered;
+  }
+  const seen = new Set(), out = [];
+  src.forEach(it => {
+    const p = it.project || '未分配';
+    if (!seen.has(p)) { seen.add(p); out.push(p); }
+  });
+  return out;
+}
+
+/** Auto-assign colors per module, pillar, and project (stable within a session) */
 function rebuildColorMap() {
   moduleColorMap = {};
   getModules().forEach((m, i) => {
@@ -165,6 +193,10 @@ function rebuildColorMap() {
   pillarColorMap = {};
   getPillars().forEach((p, i) => {
     pillarColorMap[p] = MODULE_COLORS[i % MODULE_COLORS.length];
+  });
+  projectColorMap = {};
+  getProjects().forEach((p, i) => {
+    projectColorMap[p] = MODULE_COLORS[i % MODULE_COLORS.length];
   });
   rebuildTeamColorMap();
 }
@@ -175,6 +207,10 @@ function getModuleColor(moduleName) {
 
 function getPillarColor(pillarName) {
   return pillarColorMap[pillarName] || MODULE_COLORS[0];
+}
+
+function getProjectColor(projectName) {
+  return projectColorMap[projectName] || MODULE_COLORS[0];
 }
 
 /**
@@ -228,7 +264,7 @@ function packRows(items) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-/** Return items filtered by active author/team filters */
+/** Return items filtered by active author/team/devType filters */
 function getFilteredItems() {
   return appData.items.filter(item => {
     if (filterAuthors.size > 0) {
@@ -238,6 +274,9 @@ function getFilteredItems() {
     if (filterTeams.size > 0) {
       const teams = Array.isArray(item.collaborators) ? item.collaborators : [];
       if (!teams.some(t => filterTeams.has(t))) return false;
+    }
+    if (filterDevTypes.size > 0) {
+      if (!filterDevTypes.has(item.devType || '')) return false;
     }
     return true;
   });
@@ -280,6 +319,22 @@ function refreshFilterUI() {
     }
   }
 
+  // Rebuild dev type panel
+  const devTypePanel = document.getElementById('filter-devtype-panel');
+  if (devTypePanel) {
+    const allDevTypes = [...new Set(appData.items.map(it => it.devType || '').filter(Boolean))].sort();
+    if (allDevTypes.length === 0) {
+      devTypePanel.innerHTML = '<div class="filter-empty-hint">暂无数据</div>';
+    } else {
+      devTypePanel.innerHTML =
+        allDevTypes.map(d => {
+          const cfg = DEV_TYPE_CONFIG[d] || { abbr: d.slice(0,3), bg: '#94A3B8', fg: '#fff' };
+          return `<label class="filter-option"><input type="checkbox" value="${esc(d)}"${filterDevTypes.has(d) ? ' checked' : ''}><span class="devtype-badge" style="background:${cfg.bg};color:${cfg.fg}">${cfg.abbr}</span>${esc(d)}</label>`;
+        }).join('') +
+        (filterDevTypes.size > 0 ? '<div class="filter-panel-actions"><button class="filter-clear" data-target="devtype">清除筛选</button></div>' : '');
+    }
+  }
+
   // Update badges and active state
   const authorCount = document.getElementById('filter-author-count');
   const authorBtn   = document.getElementById('filter-author-btn');
@@ -290,6 +345,11 @@ function refreshFilterUI() {
   const teamBtn   = document.getElementById('filter-team-btn');
   if (teamCount) { teamCount.textContent = filterTeams.size; teamCount.classList.toggle('hidden', filterTeams.size === 0); }
   if (teamBtn)   teamBtn.classList.toggle('active', filterTeams.size > 0);
+
+  const devTypeCount = document.getElementById('filter-devtype-count');
+  const devTypeBtn   = document.getElementById('filter-devtype-btn');
+  if (devTypeCount) { devTypeCount.textContent = filterDevTypes.size; devTypeCount.classList.toggle('hidden', filterDevTypes.size === 0); }
+  if (devTypeBtn)   devTypeBtn.classList.toggle('active', filterDevTypes.size > 0);
 
   // Update view tabs
   document.querySelectorAll('.view-tab').forEach(btn => {
@@ -330,22 +390,15 @@ function render() {
   empty.style.display = 'none';
   body.innerHTML = '';
 
-  // Update corner text based on active view
   const cornerEl = document.getElementById('corner-text');
-  if (cornerEl) cornerEl.textContent = activeView === 'pillar' ? 'Pillar / 月份' : '模块 / 月份';
+  if (cornerEl) cornerEl.textContent = activeView === 'value' ? 'Pillar / 月份' : 'Project / 月份';
 
   const filtered = getFilteredItems();
 
-  if (activeView === 'pillar') {
-    getPillars(filtered).forEach(pillarName => {
-      const pillarItems = filtered.filter(it => (it.pillar || '未分配') === pillarName);
-      renderPillarSection(pillarName, pillarItems, body);
-    });
+  if (activeView === 'value') {
+    renderValueView(filtered, body);
   } else {
-    getModules(filtered).forEach(moduleName => {
-      const moduleItems = filtered.filter(it => it.module === moduleName);
-      renderModule(moduleName, moduleItems, body);
-    });
+    renderProjectView(filtered, body);
   }
 
   renderTodayLines();
@@ -369,97 +422,22 @@ function buildMonthHeader() {
   }).join('');
 }
 
-function renderModule(moduleName, items, container) {
-  const color    = getModuleColor(moduleName);
-  const collapsed = !!collapsedModules[moduleName];
+// ============================================================
+//  Two-level view rendering
+// ============================================================
 
-  const section = document.createElement('div');
-  section.className = 'module-section';
-  section.dataset.module = moduleName;
-
-  // ---- Module header row ----
-  const headerRow = document.createElement('div');
-  headerRow.className = 'module-header-row grid-row';
-
-  headerRow.innerHTML = `
-    <div class="label-col module-label-cell" style="border-left:3px solid ${color.bg}">
-      <span class="module-drag-handle" title="拖拽排序">⠿</span>
-      <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
-      <span class="module-name-text" title="${esc(moduleName)}">${esc(moduleName)}</span>
-      <span class="module-badge">${items.length}</span>
-      <button class="module-rename-btn" title="重命名分类">✎</button>
-    </div>
-    <div class="module-header-timeline">
-      ${Array.from({length:12}, (_,i) => `<div class="month-cell"></div>`).join('')}
-    </div>
-  `;
-
-  const labelCell = headerRow.querySelector('.label-col');
-  labelCell.addEventListener('click', () => {
-    collapsedModules[moduleName] = !collapsed;
-    saveCollapsed();
-    render();
+function renderValueView(filtered, body) {
+  getPillars(filtered).forEach(pillarName => {
+    const pillarItems = filtered.filter(it => (it.pillar || '未分配') === pillarName);
+    renderValuePillar(pillarName, pillarItems, body);
   });
-
-  headerRow.querySelector('.module-drag-handle').addEventListener('mousedown', e => {
-    e.stopPropagation();
-    startModuleDrag(e, moduleName);
-  });
-
-  headerRow.querySelector('.module-rename-btn').addEventListener('click', e => {
-    e.stopPropagation();
-    startModuleRename(moduleName, headerRow.querySelector('.module-name-text'));
-  });
-
-  section.appendChild(headerRow);
-
-  // ---- Items area ----
-  if (!collapsed) {
-    const { rows: itemRowMap, rowCount } = packRows(items);
-    const areaHeight = rowCount * ROW_HEIGHT + 8;
-
-    const itemsRow = document.createElement('div');
-    itemsRow.className = 'items-row grid-row';
-    itemsRow.style.height = areaHeight + 'px';
-
-    // Alt column tinting — fiscal col i → calendar month via fromFiscalCol
-    const curCalMonth = new Date().getMonth() + 1; // 1-indexed
-    const altCells = Array.from({length:12}, (_,i) => {
-      const classes = ['month-cell'];
-      if (i % 2 === 1) classes.push('alt');
-      if (fromFiscalCol(i) === curCalMonth) classes.push('current-month-col');
-      return `<div class="${classes.join(' ')}"></div>`;
-    }).join('');
-
-    itemsRow.innerHTML = `
-      <div class="label-col items-label-col"></div>
-      <div class="items-timeline">
-        <div class="month-cells-bg">${altCells}</div>
-        <div class="items-layer"></div>
-      </div>
-    `;
-
-    const layer = itemsRow.querySelector('.items-layer');
-
-    items.forEach(item => {
-      const row = itemRowMap[item.id] ?? 0;
-      layer.appendChild(createBar(item, color, row));
-    });
-
-    section.appendChild(itemsRow);
-  }
-
-  container.appendChild(section);
 }
 
-// ============================================================
-//  Pillar view rendering
-// ============================================================
-
-function renderPillarSection(pillarName, items, container) {
-  const color    = getPillarColor(pillarName);
-  const colKey   = '__pillar__' + pillarName;
-  const collapsed = !!collapsedModules[colKey];
+function renderValuePillar(pillarName, items, container) {
+  const color      = getPillarColor(pillarName);
+  const colKey     = '__pillar__' + pillarName;
+  const collapsed  = !!collapsedModules[colKey];
+  const pillarValue = items.find(it => it.pillarValue)?.pillarValue || '';
 
   const section = document.createElement('div');
   section.className = 'module-section';
@@ -467,32 +445,29 @@ function renderPillarSection(pillarName, items, container) {
 
   const headerRow = document.createElement('div');
   headerRow.className = 'module-header-row grid-row';
-
   headerRow.innerHTML = `
-    <div class="label-col module-label-cell" style="border-left:3px solid ${color.bg}">
+    <div class="label-col module-label-cell" style="border-left:4px solid ${color.bg}">
       <span class="module-drag-handle pillar-drag-handle" title="拖拽排序">⠿</span>
       <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
       <span class="module-name-text" title="${esc(pillarName)}">${esc(pillarName)}</span>
       <span class="module-badge">${items.length}</span>
       <button class="module-rename-btn" title="重命名 Pillar">✎</button>
     </div>
-    <div class="module-header-timeline">
+    <div class="module-header-timeline outer-header-timeline">
       ${Array.from({length:12}, () => `<div class="month-cell"></div>`).join('')}
+      ${pillarValue ? `<div class="outer-header-desc"><span title="${esc(pillarValue)}">${esc(pillarValue)}</span></div>` : ''}
     </div>
   `;
 
-  const labelCell = headerRow.querySelector('.label-col');
-  labelCell.addEventListener('click', () => {
+  headerRow.querySelector('.label-col').addEventListener('click', () => {
     collapsedModules[colKey] = !collapsed;
     saveCollapsed();
     render();
   });
-
   headerRow.querySelector('.pillar-drag-handle').addEventListener('mousedown', e => {
     e.stopPropagation();
     startPillarDrag(e, pillarName);
   });
-
   headerRow.querySelector('.module-rename-btn').addEventListener('click', e => {
     e.stopPropagation();
     startPillarRename(pillarName, headerRow.querySelector('.module-name-text'));
@@ -501,6 +476,103 @@ function renderPillarSection(pillarName, items, container) {
   section.appendChild(headerRow);
 
   if (!collapsed) {
+    getProjects(items).forEach(projectName => {
+      const projectItems = items.filter(it => (it.project || '未分配') === projectName);
+      const innerKey = '__inner__' + colKey + '::' + projectName;
+      section.appendChild(renderInnerGroup(projectName, projectItems, innerKey, color));
+    });
+  }
+
+  container.appendChild(section);
+}
+
+function renderProjectView(filtered, body) {
+  getProjects(filtered).forEach(projectName => {
+    const projectItems = filtered.filter(it => (it.project || '未分配') === projectName);
+    renderProjectOuter(projectName, projectItems, body);
+  });
+}
+
+function renderProjectOuter(projectName, items, container) {
+  const color     = getProjectColor(projectName);
+  const colKey    = '__project__' + projectName;
+  const collapsed = !!collapsedModules[colKey];
+
+  const section = document.createElement('div');
+  section.className = 'module-section';
+  section.dataset.project = projectName;
+
+  const headerRow = document.createElement('div');
+  headerRow.className = 'module-header-row grid-row';
+  headerRow.innerHTML = `
+    <div class="label-col module-label-cell" style="border-left:4px solid ${color.bg}">
+      <span class="module-drag-handle project-drag-handle" title="拖拽排序">⠿</span>
+      <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
+      <span class="module-name-text" title="${esc(projectName)}">${esc(projectName)}</span>
+      <span class="module-badge">${items.length}</span>
+      <button class="module-rename-btn" title="重命名 Project">✎</button>
+    </div>
+    <div class="module-header-timeline">
+      ${Array.from({length:12}, () => `<div class="month-cell"></div>`).join('')}
+    </div>
+  `;
+
+  headerRow.querySelector('.label-col').addEventListener('click', () => {
+    collapsedModules[colKey] = !collapsed;
+    saveCollapsed();
+    render();
+  });
+  headerRow.querySelector('.project-drag-handle').addEventListener('mousedown', e => {
+    e.stopPropagation();
+    startProjectDrag(e, projectName);
+  });
+  headerRow.querySelector('.module-rename-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    startProjectRename(projectName, headerRow.querySelector('.module-name-text'));
+  });
+
+  section.appendChild(headerRow);
+
+  if (!collapsed) {
+    getModules(items).forEach(moduleName => {
+      const moduleItems = items.filter(it => it.module === moduleName);
+      const innerKey = '__inner__' + colKey + '::' + moduleName;
+      section.appendChild(renderInnerGroup(moduleName, moduleItems, innerKey, getModuleColor(moduleName)));
+    });
+  }
+
+  container.appendChild(section);
+}
+
+/** Shared inner group renderer (project within pillar, or module within project) */
+function renderInnerGroup(name, items, colKey, color) {
+  const collapsed = !!collapsedModules[colKey];
+
+  const group = document.createElement('div');
+  group.className = 'inner-group';
+
+  const headerRow = document.createElement('div');
+  headerRow.className = 'grid-row inner-header-row';
+  headerRow.innerHTML = `
+    <div class="label-col inner-label-cell" style="border-left:3px solid ${color.bg}">
+      <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>
+      <span class="inner-name-text" title="${esc(name)}">${esc(name)}</span>
+      <span class="module-badge">${items.length}</span>
+    </div>
+    <div class="inner-header-timeline">
+      ${Array.from({length:12}, () => `<div class="month-cell"></div>`).join('')}
+    </div>
+  `;
+
+  headerRow.querySelector('.label-col').addEventListener('click', () => {
+    collapsedModules[colKey] = !collapsed;
+    saveCollapsed();
+    render();
+  });
+
+  group.appendChild(headerRow);
+
+  if (!collapsed && items.length > 0) {
     const { rows: itemRowMap, rowCount } = packRows(items);
     const areaHeight = rowCount * ROW_HEIGHT + 8;
 
@@ -525,18 +597,15 @@ function renderPillarSection(pillarName, items, container) {
     `;
 
     const layer = itemsRow.querySelector('.items-layer');
-
     items.forEach(item => {
-      const row      = itemRowMap[item.id] ?? 0;
-      // In pillar view bars use module color so module identity is preserved
-      const barColor = getModuleColor(item.module);
-      layer.appendChild(createBar(item, barColor, row));
+      const row = itemRowMap[item.id] ?? 0;
+      layer.appendChild(createBar(item, getModuleColor(item.module), row));
     });
 
-    section.appendChild(itemsRow);
+    group.appendChild(itemsRow);
   }
 
-  container.appendChild(section);
+  return group;
 }
 
 function startPillarDrag(e, pillarName) {
@@ -634,6 +703,100 @@ function startPillarRename(oldName, nameSpan) {
   input.addEventListener('blur', finish);
 }
 
+function startProjectDrag(e, projectName) {
+  e.preventDefault();
+  const allProjects = getProjects();
+  const origIdx     = allProjects.indexOf(projectName);
+  moduleDragState   = { moduleName: projectName, origIdx, targetIdx: origIdx };
+
+  document.body.style.cursor = 'grabbing';
+  const draggedSection = document.querySelector(`.module-section[data-project="${CSS.escape(projectName)}"]`);
+  if (draggedSection) draggedSection.classList.add('module-being-dragged');
+
+  const onMove = me => {
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after'));
+    const sections = [...document.querySelectorAll('.module-section')];
+    let targetIdx = allProjects.length;
+    for (let i = 0; i < sections.length; i++) {
+      const rect = sections[i].getBoundingClientRect();
+      if (me.clientY < rect.top + rect.height / 2) {
+        sections[i].classList.add('drop-before');
+        targetIdx = i;
+        break;
+      }
+      if (i === sections.length - 1) sections[i].classList.add('drop-after');
+    }
+    moduleDragState.targetIdx = targetIdx;
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup',   onUp);
+    document.body.style.cursor = '';
+    document.querySelectorAll('.module-section').forEach(s =>
+      s.classList.remove('drop-before', 'drop-after', 'module-being-dragged'));
+
+    const { targetIdx } = moduleDragState;
+    moduleDragState = null;
+
+    if (targetIdx === origIdx || targetIdx === origIdx + 1) return;
+    const newOrder = [...allProjects];
+    newOrder.splice(origIdx, 1);
+    const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
+    newOrder.splice(insertAt, 0, projectName);
+    appData.projectOrder = newOrder;
+    saveData();
+    render();
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
+}
+
+function startProjectRename(oldName, nameSpan) {
+  const input = document.createElement('input');
+  input.className = 'module-name-input';
+  input.value = oldName;
+  nameSpan.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    const newName = input.value.trim() || oldName;
+    if (newName === oldName) { render(); return; }
+
+    const existing = getProjects();
+    const willMerge = existing.includes(newName);
+    if (willMerge && !confirm(`"${newName}" 已存在，确定将 "${oldName}" 合并进去？`)) {
+      render(); return;
+    }
+
+    appData.items.forEach(it => {
+      if ((it.project || '未分配') === oldName) it.project = newName === '未分配' ? '' : newName;
+    });
+
+    if (!appData.projectOrder) appData.projectOrder = [...existing];
+    const idx = appData.projectOrder.indexOf(oldName);
+    if (idx !== -1) {
+      if (willMerge) appData.projectOrder.splice(idx, 1);
+      else           appData.projectOrder[idx] = newName;
+    }
+
+    saveData();
+    render();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  input.blur();
+    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+  });
+  input.addEventListener('blur', finish);
+}
+
 function renderTodayLines() {
   const now = new Date();
 
@@ -654,6 +817,12 @@ function renderTodayLines() {
     line.style.left = pct;
     el.appendChild(line);
   });
+}
+
+function devTypeBadgeHtml(devType) {
+  if (!devType) return '';
+  const cfg = DEV_TYPE_CONFIG[devType] || { abbr: devType.slice(0, 3), bg: '#94A3B8', fg: '#fff' };
+  return `<span class="devtype-badge" style="background:${cfg.bg};color:${cfg.fg}" title="${esc(devType)}">${cfg.abbr}</span>`;
 }
 
 // ============================================================
@@ -685,6 +854,7 @@ function createBar(item, color, row) {
       <span class="bar-title">${esc(item.title)}</span>
       <div class="bar-meta-row">
         ${teamAvatarsHtml}
+        ${devTypeBadgeHtml(item.devType)}
         <span class="bar-duration">${item.duration}m</span>
       </div>
     </div>
@@ -857,6 +1027,16 @@ function showTooltip(item, x, y) {
     authorRow.classList.add('hidden');
   }
 
+  const devTypeRow = document.getElementById('tt-devtype-row');
+  const devTypeEl  = document.getElementById('tt-devtype');
+  if (item.devType && item.devType.trim()) {
+    const cfg = DEV_TYPE_CONFIG[item.devType] || { abbr: item.devType.slice(0,3), bg: '#94A3B8', fg: '#fff' };
+    devTypeEl.innerHTML = `<span class="devtype-badge" style="background:${cfg.bg};color:${cfg.fg}">${cfg.abbr}</span> ${esc(item.devType)}`;
+    devTypeRow.classList.remove('hidden');
+  } else {
+    devTypeRow.classList.add('hidden');
+  }
+
   const collabWrap  = document.getElementById('tt-collab-wrap');
   const collabChips = document.getElementById('tt-collab-chips');
   const collabs = Array.isArray(item.collaborators) ? item.collaborators.filter(Boolean) : [];
@@ -925,6 +1105,7 @@ function openModal(itemId = null) {
     form.outcome.value       = it.outcome      || '';
     form.collaborators.value = Array.isArray(it.collaborators) ? it.collaborators.join(', ') : '';
     form.author.value        = it.author || '';
+    form.devType.value       = it.devType || '';
     form.startMonth.value    = it.startMonth;
     form.duration.value      = it.duration;
     deleteBtn.classList.remove('hidden');
@@ -1020,7 +1201,12 @@ function csvCell(v) {
 
 // Normalise a raw row object (from CSV or JSON alias keys) into a clean item
 function normaliseItem(it) {
-  // Accept common alias column names
+  // Accept new Excel-style column names
+  if (!it.title       && it.feature)                it.title       = it.feature;
+  if (!it.problem     && it['feature problem'])      it.problem     = it['feature problem'];
+  if (!it.description && it['feature description']) it.description = it['feature description'];
+  if (!it.outcome     && it['feature outcome'])      it.outcome     = it['feature outcome'];
+  // Accept legacy alias column names
   if (!it.module      && it.Module)      it.module      = it.Module;
   if (!it.pillar      && it.Pillar)      it.pillar      = it.Pillar;
   if (!it.title       && it.Function)    it.title       = it.Function;
@@ -1039,6 +1225,9 @@ function normaliseItem(it) {
   if (!it.title)       it.title       = '未命名';
   if (!it.description) it.description = '';
   if (!it.author)      it.author      = '';
+  it.pillarValue = (it['pillar values'] || it.pillarValue || '').trim();
+  it.devType     = (it['dev type']      || it.devType     || '').trim();
+  it.project     = (it.project || '').trim();
   it.startMonth = clamp(parseInt(it.startMonth) || FISCAL_START, 1, 12);
   it.duration   = clamp(parseInt(it.duration)   || 3,            1, 12 - toFiscalCol(it.startMonth));
 
@@ -1092,13 +1281,15 @@ function readCSVFile(file, callback) {
 }
 
 function exportCSV() {
-  const HEADERS = ['author','module','pillar','problem','title','description','outcome','collaborators','startMonth','duration'];
+  const HEADERS = ['pillar','pillar values','project','module','feature','feature problem','feature description','feature outcome','author','collaborators','startMonth','duration','dev type'];
+  const FIELD_MAP = { 'feature': 'title', 'feature problem': 'problem', 'feature description': 'description', 'feature outcome': 'outcome', 'pillar values': 'pillarValue', 'dev type': 'devType' };
   const rows = [
     HEADERS.join(','),
     ...appData.items.map(it => HEADERS.map(h => {
-      const v = h === 'collaborators'
-        ? (Array.isArray(it[h]) ? it[h].join(';') : (it[h] || ''))
-        : (it[h] ?? '');
+      const key = FIELD_MAP[h] || h;
+      const v = key === 'collaborators'
+        ? (Array.isArray(it[key]) ? it[key].join(';') : (it[key] || ''))
+        : (it[key] ?? '');
       return csvCell(v);
     }).join(','))
   ];
@@ -1113,16 +1304,13 @@ function exportCSV() {
 }
 
 function downloadSample() {
-  const HEADERS = ['author','module','pillar','problem','title','description','outcome','collaborators','startMonth','duration'];
+  const HEADERS = ['pillar','pillar values','project','module','feature','feature problem','feature description','feature outcome','author','collaborators','startMonth','duration','dev type'];
   const items = [
-    { module: '健康管理',  pillar: '用户健康体验',   title: 'Routines 减重计划',  problem: '用户缺乏科学减重方案，依从性低',       description: '设计基于目标体重的阶段性打卡计划，结合 AI 动态调整运动与饮食建议',  outcome: '30天留存提升25%，减重打卡完成率≥70%',  collaborators: '医学团队;内容团队',  author: 'Lynn',     startMonth: 4,  duration: 3 },
-    { module: '健康管理',  pillar: '用户健康体验',   title: '营养餐食推荐引擎',   problem: '通用食谱不满足个体差异',              description: '基于用户健康档案、过敏史和偏好构建个性化食谱推荐模型',              outcome: '个性化推荐满意度≥4.2分',              collaborators: '医学团队;数据团队',  author: 'Ned',      startMonth: 7,  duration: 2 },
-    { module: '本地活动',  pillar: '本地化增长',     title: '文莱 QR Code 寻宝', problem: '缺乏线下互动，用户活跃度低',           description: '在文莱核心商圈布置实体 QR 码任务点，用户扫码解锁奖励与健康内容',    outcome: '活动期间 DAU 提升40%',                collaborators: 'Ops Team;市场团队', author: 'Lynn',     startMonth: 5,  duration: 2 },
-    { module: '本地活动',  pillar: '本地化增长',     title: '线下合作商户接入',   problem: '无本地商户生态，变现路径单一',          description: '搭建商户入驻平台，支持优惠券核销、积分兑换与联合营销活动管理',        outcome: '接入≥50家商户，GMV+100K/月',          collaborators: 'Ops Team;商务团队', author: 'Ned;Lynn', startMonth: 8,  duration: 3 },
-    { module: '用户增长',  pillar: '本地化增长',     title: '注册转化漏斗优化',   problem: '注册流程繁琐，中途流失率达40%',        description: '精简注册步骤至3步以内，引入手机号一键授权与渐进式资料完善机制',        outcome: '注册转化率提升20%',                   collaborators: '',                  author: 'Lynn',     startMonth: 4,  duration: 2 },
-    { module: '用户增长',  pillar: '本地化增长',     title: '推荐裂变系统',       problem: '缺乏病毒传播机制',                   description: '设计邀请有礼玩法，新用户完成首次健康打卡后双方均获得会员权益',        outcome: '月新增用户提升15%',                   collaborators: '市场团队',           author: 'Ned',      startMonth: 7,  duration: 3 },
-    { module: '基础架构',  pillar: '平台可靠性',     title: 'API 网关升级',       problem: '旧网关无法支撑高并发，运维成本高',     description: '迁移至云原生 API 网关，接入限流熔断、灰度发布与全链路监控能力',        outcome: '吞吐量提升3倍，故障率降低70%',         collaborators: '运维团队',           author: 'Lynn',     startMonth: 4,  duration: 2 },
-    { module: '基础架构',  pillar: '平台可靠性',     title: '多租户权限体系',     problem: '权限管理混乱，安全合规风险高',         description: '重构 RBAC 权限模型，支持角色继承与接口级授权，满足 PDPA 审计要求',  outcome: '权限粒度细化至接口级，满足 PDPA 合规', collaborators: '法务团队;安全团队',  author: 'Ned',      startMonth: 9,  duration: 4 },
+    { pillar: '用户健康体验', 'pillar values': '通过个性化健康管理提升用户留存与参与度', project: '健康工具', module: '健康管理', 'feature': 'Routines 减重计划',  'feature problem': '用户缺乏科学减重方案，依从性低',       'feature description': '设计基于目标体重的阶段性打卡计划，结合 AI 动态调整运动与饮食建议',  'feature outcome': '30天留存提升25%，减重打卡完成率≥70%',  collaborators: '医学团队;内容团队',  author: 'Lynn',     startMonth: 4,  duration: 3, 'dev type': 'R&D' },
+    { pillar: '用户健康体验', 'pillar values': '通过个性化健康管理提升用户留存与参与度', project: '健康工具', module: '健康管理', 'feature': '营养餐食推荐引擎',   'feature problem': '通用食谱不满足个体差异',              'feature description': '基于用户健康档案、过敏史和偏好构建个性化食谱推荐模型',              'feature outcome': '个性化推荐满意度≥4.2分',              collaborators: '医学团队;数据团队',  author: 'Ned',      startMonth: 7,  duration: 2, 'dev type': 'R&D' },
+    { pillar: '本地化增长',   'pillar values': '建立本地生态护城河，提升文莱市场渗透率',   project: '本地运营', module: '本地活动', 'feature': '文莱 QR Code 寻宝', 'feature problem': '缺乏线下互动，用户活跃度低',          'feature description': '在文莱核心商圈布置实体 QR 码任务点，用户扫码解锁奖励',    'feature outcome': '活动期间 DAU 提升40%',                collaborators: 'Ops Team;市场团队', author: 'Lynn',     startMonth: 5,  duration: 2, 'dev type': 'New Contract' },
+    { pillar: '本地化增长',   'pillar values': '建立本地生态护城河，提升文莱市场渗透率',   project: '本地运营', module: '本地活动', 'feature': '线下合作商户接入',   'feature problem': '无本地商户生态，变现路径单一',          'feature description': '搭建商户入驻平台，支持优惠券核销、积分兑换与联合营销活动',        'feature outcome': '接入≥50家商户，GMV+100K/月',          collaborators: 'Ops Team;商务团队', author: 'Ned;Lynn', startMonth: 8,  duration: 3, 'dev type': 'New Contract' },
+    { pillar: '平台可靠性',   'pillar values': '保障系统稳定性与安全合规，降低运维风险',   project: '基础升级', module: '基础架构', 'feature': 'API 网关升级',       'feature problem': '旧网关无法支撑高并发，运维成本高',     'feature description': '迁移至云原生 API 网关，接入限流熔断、灰度发布与全链路监控',        'feature outcome': '吞吐量提升3倍，故障率降低70%',         collaborators: '运维团队',           author: 'Lynn',     startMonth: 4,  duration: 2, 'dev type': 'Maintenance' },
   ];
   const rows = [
     HEADERS.join(','),
@@ -1349,6 +1537,7 @@ function init() {
       it.outcome        = form.outcome.value.trim();
       it.collaborators  = collaborators;
       it.author         = form.author.value.trim();
+      it.devType        = form.devType.value;
       it.startMonth     = startMonth;
       it.duration       = duration;
     } else {
@@ -1362,6 +1551,9 @@ function init() {
         outcome:       form.outcome.value.trim(),
         collaborators,
         author:        form.author.value.trim(),
+        devType:       form.devType.value,
+        pillarValue:   '',
+        project:       '',
         startMonth,
         duration
       });
@@ -1415,12 +1607,17 @@ function init() {
     togglePanel('filter-team-panel');
   });
 
+  document.getElementById('filter-devtype-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    togglePanel('filter-devtype-panel');
+  });
+
   // Close panels when clicking outside
   document.addEventListener('click', () => {
     document.querySelectorAll('.filter-dropdown-panel').forEach(p => p.classList.add('hidden'));
   });
 
-  // Prevent panel clicks from closing the panel
+  // Prevent panel clicks from closing the panel (covers all panels including devtype)
   document.querySelectorAll('.filter-dropdown-panel').forEach(p => {
     p.addEventListener('click', e => e.stopPropagation());
   });
@@ -1455,6 +1652,54 @@ function init() {
       filterTeams.clear();
       render();
     }
+  });
+
+  document.getElementById('filter-devtype-panel').addEventListener('change', e => {
+    if (e.target.type === 'checkbox') {
+      if (e.target.checked) filterDevTypes.add(e.target.value);
+      else filterDevTypes.delete(e.target.value);
+      render();
+    }
+  });
+
+  document.getElementById('filter-devtype-panel').addEventListener('click', e => {
+    if (e.target.classList.contains('filter-clear')) {
+      filterDevTypes.clear();
+      render();
+    }
+  });
+
+  // ---- Label column resize ----
+  const savedLabelWidth = localStorage.getItem(LABEL_WIDTH_KEY);
+  if (savedLabelWidth) {
+    document.documentElement.style.setProperty('--label-width', savedLabelWidth + 'px');
+  }
+
+  const resizeHandle = document.getElementById('label-col-resize-handle');
+  resizeHandle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    resizeHandle.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+
+    const startX     = e.clientX;
+    const startWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--label-width')) || 160;
+
+    const onMove = me => {
+      const newWidth = Math.max(120, Math.min(400, startWidth + (me.clientX - startX)));
+      document.documentElement.style.setProperty('--label-width', newWidth + 'px');
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      resizeHandle.classList.remove('resizing');
+      document.body.style.cursor = '';
+      const finalWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--label-width'));
+      localStorage.setItem(LABEL_WIDTH_KEY, finalWidth);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   });
 }
 

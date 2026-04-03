@@ -69,8 +69,8 @@
   <!-- ===== FILTER BAR ===== -->
   <div class="filter-bar" id="filter-bar">
     <div class="view-tabs" id="view-tabs">
-      <button class="view-tab active" data-view="module">模块视图</button>
-      <button class="view-tab" data-view="pillar">Pillar 视图</button>
+      <button class="view-tab active" data-view="value">价值视图</button>
+      <button class="view-tab" data-view="project">项目视图</button>
     </div>
     <div class="filter-bar-sep"></div>
     <span class="filter-label">筛选：</span>
@@ -91,6 +91,14 @@
         </button>
         <div class="filter-dropdown-panel hidden" id="filter-team-panel"></div>
       </div>
+      <div class="filter-group">
+        <button class="filter-btn" id="filter-devtype-btn">
+          项目类型
+          <span class="filter-count hidden" id="filter-devtype-count">0</span>
+          <svg viewBox="0 0 10 6" fill="currentColor" width="8" height="8"><path d="M0 0l5 6 5-6z"/></svg>
+        </button>
+        <div class="filter-dropdown-panel hidden" id="filter-devtype-panel"></div>
+      </div>
     </div>
   </div>
 
@@ -101,6 +109,7 @@
     <div class="roadmap-header-row" id="months-header-row">
       <div class="label-col header-corner">
         <span class="corner-text" id="corner-text">模块 / 月份</span>
+        <div class="label-col-resize-handle" id="label-col-resize-handle" title="拖拽调整列宽"></div>
       </div>
       <div class="months-header" id="months-header"></div>
     </div>
@@ -178,6 +187,16 @@
           <label class="form-label">需要协作的团队</label>
           <input class="form-input" name="collaborators" placeholder="例：医学团队, 运营团队, 设计团队（逗号分隔）">
           <span class="form-hint">多个团队用英文逗号分隔，留空表示无需外部协作</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">项目类型 <span class="field-alias">Dev Type</span></label>
+          <select class="form-input" name="devType">
+            <option value="">— 未指定 —</option>
+            <option value="New Contract">New Contract</option>
+            <option value="R&D">R&amp;D</option>
+            <option value="Maintenance">Maintenance</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -261,9 +280,13 @@
       <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><circle cx="7" cy="4.5" r="2.5"/><path d="M1.5 12c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/></svg>
       <span id="tt-author"></span>
     </div>
+    <div class="tt-author-row hidden" id="tt-devtype-row">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><rect x="2" y="2" width="10" height="10" rx="2"/><line x1="2" y1="6" x2="12" y2="6"/></svg>
+      <span id="tt-devtype"></span>
+    </div>
     <div class="tt-hint">点击编辑 · 拖拽移动 · 右侧拖拽调整时长</div>
   </div>
 
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

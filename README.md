@@ -15,38 +15,45 @@ python3 -m http.server 3000
 ## 功能
 
 - 财年视图（4月–次年3月），按月分列，今日红线始终显示
-- **双视图切换**：模块视图（按功能模块分组）/ Pillar 视图（按高层价值主题分组，面向汇报）
-- 按模块分组，颜色自动分配；Pillar 视图中条形保留模块颜色，便于跨模块识别
-- **筛选**：按执行人（负责人）筛选、按配合团队筛选，支持多选，筛选结果实时更新
+- **双视图切换**：
+  - **价值视图**：Pillar（外层）→ Project（内层），Pillar 描述横跨时间轴通栏显示，面向战略汇报
+  - **项目视图**：Project（外层）→ Module（内层），面向交付管理
+- 两层分组均可独立折叠/展开；外层支持拖拽排序、重命名
+- 条形颜色按 Module 分配，切换视图颜色保持一致，便于跨维度识别
+- **项目类型标记**：每个条形显示 Dev Type 方形角标（NC / R&D / Mnt），颜色区分
+- **三维筛选**：执行人、配合团队、项目类型，多选，实时生效
 - 拖拽条形调整开始月份，拖拽右侧手柄调整时长（支持跨年至次年3月）
-- 模块/Pillar 可重命名、合并、拖拽排序
-- 点击条形编辑/删除
-- 悬停显示详情 tooltip
+- 外层分组可重命名、合并、拖拽排序
+- 点击条形编辑/删除；悬停显示详情 tooltip（含项目类型）
+- **左侧列宽可拖拽调整**（120px–400px），宽度持久化保存
 - **加载 CSV**：全量替换当前数据
 - **增量导入**：追加 CSV 内容，不覆盖已有条目
-- 导出 CSV（UTF-8 BOM 编码，兼容 Mac Excel / Windows Excel / WPS / Google Sheets，直接打开不乱码）
-- 导入支持自动识别 UTF-16 LE / UTF-8 BOM / UTF-8 编码，导出后可直接重新导入
+- 导出 CSV（UTF-8 BOM 编码，兼容 Mac Excel / Windows Excel / WPS / Google Sheets）
+- 导入支持自动识别 UTF-16 LE / UTF-8 BOM / UTF-8 编码
 - 数据存储于 localStorage，刷新不丢失
 
 ## CSV 数据格式
 
 ```csv
-author,module,pillar,problem,title,description,outcome,collaborators,startMonth,duration
-Lynn,数据展示,平台体验,现有图表加载慢,图表组件重构,重构图表渲染层,加载速度提升50%,,4,3
+pillar,pillar values,project,module,feature,feature problem,feature description,feature outcome,author,collaborators,startMonth,duration,dev type
+Enhance Clinical Quality & Efficiency,通过 AI 提升...,Dr. Copilot Pilot Program,DW,#3 AI PHR Summary,医生难以快速把握患者全貌,AI 生成患者总概览,帮助医生更快准备会诊,CY,Medical,4,2,New Contract
 ```
 
 | 列 | 必填 | 说明 |
 |----|------|------|
-| `author` | ❌ | 负责人姓名，支持逗号分隔多人；用于执行人筛选 |
-| `module` | ✅ | 所属模块，同名自动归组 |
-| `pillar` | ❌ | 所属 Pillar（高层价值主题），用于 Pillar 视图汇报；留空则归入「未分配」 |
-| `problem` | ❌ | 解决的问题 |
-| `title` | ✅ | 功能标题，显示在条形上 |
-| `description` | ❌ | 详细描述 |
-| `outcome` | ❌ | 预期效果 |
-| `collaborators` | ❌ | 协作团队，多个用 `;` 分隔；用于配合团队筛选 |
-| `startMonth` | ✅ | 开始月份 1–12（1=1月，4=4月） |
-| `duration` | ✅ | 持续月数，财年内最长到次年3月 |
+| `pillar` | ❌ | 所属 Pillar（战略价值主题），价值视图外层分组 |
+| `pillar values` | ❌ | Pillar 的战略价值描述，显示在价值视图通栏 |
+| `project` | ❌ | 所属项目，价值视图内层 / 项目视图外层分组 |
+| `module` | ✅ | 所属模块，项目视图内层分组，也决定条形颜色 |
+| `feature` | ✅ | 功能标题，显示在条形上 |
+| `feature problem` | ❌ | 解决的问题 |
+| `feature description` | ❌ | 详细描述 |
+| `feature outcome` | ❌ | 预期效果 |
+| `author` | ❌ | 负责人，支持逗号分隔多人 |
+| `collaborators` | ❌ | 协作团队，多个用 `;` 分隔 |
+| `startMonth` | ✅ | 开始月份 1–12（4=4月，财年起始） |
+| `duration` | ✅ | 持续月数，最长到次年3月 |
+| `dev type` | ❌ | 项目类型：`New Contract` / `R&D` / `Maintenance` |
 
 ## 文件结构
 
