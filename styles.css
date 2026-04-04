@@ -360,6 +360,23 @@ body {
   min-width: 0;
   opacity: 0.75;
 }
+.outer-header-desc span:hover {
+  opacity: 1;
+  text-decoration: underline dotted;
+}
+
+.pillar-value-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: rgba(255,255,255,.9);
+  border: 1px solid #3B82F6;
+  border-radius: 3px;
+  padding: 2px 6px;
+  outline: none;
+  width: 100%;
+}
 
 /* Inner group (second level) */
 .inner-group {

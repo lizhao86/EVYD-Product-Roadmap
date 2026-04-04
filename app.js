@@ -473,6 +473,28 @@ function renderValuePillar(pillarName, items, container) {
     startPillarRename(pillarName, headerRow.querySelector('.module-name-text'));
   });
 
+  // Pillar value inline edit — click the description span
+  const descSpan = headerRow.querySelector('.outer-header-desc span');
+  if (descSpan) {
+    descSpan.style.pointerEvents = 'all';
+    descSpan.style.cursor = 'text';
+    descSpan.addEventListener('click', e => {
+      e.stopPropagation();
+      startPillarValueEdit(pillarName, pillarValue, descSpan);
+    });
+  } else {
+    // No description yet — clicking timeline area starts edit
+    const descOverlay = headerRow.querySelector('.outer-header-desc');
+    if (descOverlay) {
+      descOverlay.style.pointerEvents = 'all';
+      descOverlay.style.cursor = 'text';
+      descOverlay.addEventListener('click', e => {
+        e.stopPropagation();
+        startPillarValueEdit(pillarName, pillarValue, null);
+      });
+    }
+  }
+
   section.appendChild(headerRow);
 
   if (!collapsed) {
@@ -699,6 +721,44 @@ function startPillarRename(oldName, nameSpan) {
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter')  input.blur();
     if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+  });
+  input.addEventListener('blur', finish);
+}
+
+function startPillarValueEdit(pillarName, currentValue, spanEl) {
+  const input = document.createElement('input');
+  input.className = 'pillar-value-input';
+  input.value = currentValue;
+  input.placeholder = '输入 Pillar 战略价值描述…';
+
+  if (spanEl) {
+    spanEl.replaceWith(input);
+  } else {
+    // No existing span — find the desc overlay and inject input
+    const overlay = document.querySelector(`.module-section[data-pillar="${CSS.escape(pillarName)}"] .outer-header-desc`);
+    if (overlay) overlay.appendChild(input);
+    else { render(); return; }
+  }
+
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    const newValue = input.value.trim();
+    // Update pillarValue on all items belonging to this pillar
+    appData.items.forEach(it => {
+      if ((it.pillar || '未分配') === pillarName) it.pillarValue = newValue;
+    });
+    saveData();
+    render();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  input.blur();
+    if (e.key === 'Escape') { done = true; render(); }
   });
   input.addEventListener('blur', finish);
 }
@@ -1099,6 +1159,7 @@ function openModal(itemId = null) {
     title.textContent        = '编辑条目';
     form.module.value        = it.module;
     form.pillar.value        = it.pillar       || '';
+    form.project.value       = it.project      || '';
     form.title.value         = it.title;
     form.problem.value       = it.problem      || '';
     form.description.value   = it.description  || '';
@@ -1531,6 +1592,7 @@ function init() {
       const it          = appData.items.find(i => i.id === editingItemId);
       it.module         = form.module.value.trim()       || '未分类';
       it.pillar         = form.pillar.value.trim();
+      it.project        = form.project.value.trim();
       it.title          = form.title.value.trim()        || '未命名';
       it.problem        = form.problem.value.trim();
       it.description    = form.description.value.trim();
@@ -1545,6 +1607,7 @@ function init() {
         id:            generateId(),
         module:        form.module.value.trim()      || '未分类',
         pillar:        form.pillar.value.trim(),
+        project:       form.project.value.trim(),
         title:         form.title.value.trim()       || '未命名',
         problem:       form.problem.value.trim(),
         description:   form.description.value.trim(),
