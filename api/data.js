@@ -1,4 +1,4 @@
-import { put, list, getDownloadUrl } from '@vercel/blob';
+import { put, list, get } from '@vercel/blob';
 
 const BLOB_FILENAME = 'roadmap-data.json';
 
@@ -20,10 +20,12 @@ const CORS_HEADERS = {
 async function readBlob() {
   const { blobs } = await list({ prefix: BLOB_FILENAME });
   if (blobs.length === 0) return { ...EMPTY_DATA };
-  // Private blob — use getDownloadUrl to get a time-limited signed URL
-  const downloadUrl = await getDownloadUrl(blobs[0].url);
-  const resp = await fetch(downloadUrl);
-  return resp.json();
+  const result = await get(blobs[0].url, { access: 'private' });
+  const chunks = [];
+  for await (const chunk of result.stream) {
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString());
 }
 
 export default async function handler(req, res) {
