@@ -1,4 +1,4 @@
-import { put, list, get } from '@vercel/blob';
+import { put, list, head } from '@vercel/blob';
 
 const BLOB_FILENAME = 'roadmap-data.json';
 
@@ -20,12 +20,11 @@ const CORS_HEADERS = {
 async function readBlob() {
   const { blobs } = await list({ prefix: BLOB_FILENAME });
   if (blobs.length === 0) return { ...EMPTY_DATA };
-  const result = await get(blobs[0].url, { access: 'private' });
-  const chunks = [];
-  for await (const chunk of result.stream) {
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString());
+  // head() returns metadata with a signed downloadUrl for private blobs
+  const meta = await head(blobs[0].url);
+  const res = await fetch(meta.downloadUrl);
+  if (!res.ok) throw new Error(`Blob read failed: ${res.status}`);
+  return res.json();
 }
 
 export default async function handler(req, res) {
@@ -65,6 +64,7 @@ export default async function handler(req, res) {
         access: 'private',
         contentType: 'application/json',
         addRandomSuffix: false,
+        allowOverwrite: true,
       });
 
       return res.status(200).json({ ok: true, version: incoming.version });
