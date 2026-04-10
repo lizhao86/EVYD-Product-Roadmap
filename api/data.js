@@ -20,9 +20,12 @@ const CORS_HEADERS = {
 async function readBlob() {
   // get() by pathname: returns null if not found, handles auth automatically
   const result = await get(BLOB_FILENAME, { access: 'private' });
-  if (!result) return { ...EMPTY_DATA };
-  const text = await result.text();
-  return JSON.parse(text);
+  if (!result || !result.stream) return { ...EMPTY_DATA };
+  const chunks = [];
+  for await (const chunk of result.stream) {
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString());
 }
 
 export default async function handler(req, res) {
