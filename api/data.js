@@ -1,4 +1,4 @@
-import { put, list } from '@vercel/blob';
+import { put, get } from '@vercel/blob';
 
 const BLOB_FILENAME = 'roadmap-data.json';
 
@@ -18,15 +18,11 @@ const CORS_HEADERS = {
 };
 
 async function readBlob() {
-  const { blobs } = await list({ prefix: BLOB_FILENAME });
-  if (blobs.length === 0) return { ...EMPTY_DATA };
-  // Fetch blob content using the url with the store token for authentication
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  const res = await fetch(blobs[0].url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Blob read failed: ${res.status}`);
-  return res.json();
+  // get() by pathname: returns null if not found, handles auth automatically
+  const result = await get(BLOB_FILENAME, { access: 'private' });
+  if (!result) return { ...EMPTY_DATA };
+  const text = await result.text();
+  return JSON.parse(text);
 }
 
 export default async function handler(req, res) {
