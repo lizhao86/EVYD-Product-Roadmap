@@ -37,6 +37,7 @@ export default async function handler(req, res) {
   }
 
   Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   try {
     if (req.method === 'GET') {
