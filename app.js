@@ -1,7 +1,7 @@
 /**
  * EVYD Product Roadmap — app.js
  * Pure vanilla JS, no dependencies.
- * Data persists in localStorage.
+ * Data persists in Vercel Blob (remote). UI preferences in localStorage.
  */
 
 // ============================================================
@@ -59,7 +59,8 @@ const TEAM_COLORS = [
 
 const ROW_HEIGHT     = 64;   // px per packed row (tall enough for 2-line bars)
 const BAR_PADDING    = 6;    // px gap above/below bar in its row slot
-const STORAGE_KEY    = 'evyd_roadmap_data';
+// Data stored remotely via /api/data — no localStorage for app data
+const API_URL        = '/api/data';
 const COLLAPSED_KEY  = 'evyd_roadmap_collapsed';
 const LABEL_WIDTH_KEY = 'evyd_roadmap_label_width';
 
@@ -97,30 +98,50 @@ let filterDevTypes  = new Set();  // selected dev type filter values
 //  Persistence
 // ============================================================
 
-function loadData() {
+async function loadData() {
   try {
-    const s = localStorage.getItem(STORAGE_KEY);
-    if (s) {
-      appData = JSON.parse(s);
-      // Ensure every item has an id (handles data that bypassed importJSON)
-      appData.items.forEach(it => { if (!it.id) it.id = generateId(); });
-    }
-    // Back-compat: old data without version / moduleOrder fields
-    if (!appData.version)      appData.version      = 1;
-    if (!appData.lastModified) appData.lastModified = new Date().toISOString();
-    if (!appData.moduleOrder)  appData.moduleOrder  = [];
-    if (!appData.pillarOrder)  appData.pillarOrder  = [];
-    if (!appData.projectOrder) appData.projectOrder = [];
-    const c = localStorage.getItem(COLLAPSED_KEY);
-    if (c) collapsedModules = JSON.parse(c);
-  } catch(e) { /* ignore */ }
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    appData = await res.json();
+    // Ensure every item has an id
+    appData.items.forEach(it => { if (!it.id) it.id = generateId(); });
+  } catch(e) {
+    console.warn('Failed to load remote data, using empty dataset:', e);
+    // Keep default appData
+  }
+  // Back-compat fields
+  if (!appData.version)      appData.version      = 0;
+  if (!appData.lastModified) appData.lastModified = new Date().toISOString();
+  if (!appData.moduleOrder)  appData.moduleOrder  = [];
+  if (!appData.pillarOrder)  appData.pillarOrder  = [];
+  if (!appData.projectOrder) appData.projectOrder = [];
+  // Collapsed state stays in localStorage (UI preference only)
+  const c = localStorage.getItem(COLLAPSED_KEY);
+  if (c) collapsedModules = JSON.parse(c);
 }
 
-function saveData() {
+async function saveData() {
   appData.version      = (appData.version || 0) + 1;
   appData.lastModified = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
   updateVersionIndicator();
+  try {
+    const res = await fetch(API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(appData)
+    });
+    if (res.status === 409) {
+      const err = await res.json();
+      if (confirm('数据已被他人更新（远程版本 v' + err.remoteVersion + '）。\n是否刷新页面获取最新数据？\n\n点击「取消」可先导出 CSV 备份当前内容。')) {
+        location.reload();
+      }
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch(e) {
+    console.error('Save failed:', e);
+    alert('保存失败，请检查网络连接后重试。');
+  }
 }
 
 function saveCollapsed() {
@@ -657,7 +678,7 @@ function startPillarDrag(e, pillarName) {
     moduleDragState.targetIdx = targetIdx;
   };
 
-  const onUp = () => {
+  const onUp = async () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
     document.body.style.cursor = '';
@@ -674,7 +695,7 @@ function startPillarDrag(e, pillarName) {
     const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
     pillars.splice(insertAt, 0, pillarName);
     appData.pillarOrder = pillars;
-    saveData();
+    await saveData();
     render();
   };
 
@@ -691,7 +712,7 @@ function startPillarRename(oldName, nameSpan) {
   input.select();
 
   let done = false;
-  const finish = () => {
+  const finish = async () => {
     if (done) return;
     done = true;
     const newName = input.value.trim() || oldName;
@@ -714,7 +735,7 @@ function startPillarRename(oldName, nameSpan) {
       else           appData.pillarOrder[idx] = newName;
     }
 
-    saveData();
+    await saveData();
     render();
   };
 
@@ -744,7 +765,7 @@ function startPillarValueEdit(pillarName, currentValue, spanEl) {
   input.select();
 
   let done = false;
-  const finish = () => {
+  const finish = async () => {
     if (done) return;
     done = true;
     const newValue = input.value.trim();
@@ -752,7 +773,7 @@ function startPillarValueEdit(pillarName, currentValue, spanEl) {
     appData.items.forEach(it => {
       if ((it.pillar || '未分配') === pillarName) it.pillarValue = newValue;
     });
-    saveData();
+    await saveData();
     render();
   };
 
@@ -790,7 +811,7 @@ function startProjectDrag(e, projectName) {
     moduleDragState.targetIdx = targetIdx;
   };
 
-  const onUp = () => {
+  const onUp = async () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
     document.body.style.cursor = '';
@@ -806,7 +827,7 @@ function startProjectDrag(e, projectName) {
     const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
     newOrder.splice(insertAt, 0, projectName);
     appData.projectOrder = newOrder;
-    saveData();
+    await saveData();
     render();
   };
 
@@ -823,7 +844,7 @@ function startProjectRename(oldName, nameSpan) {
   input.select();
 
   let done = false;
-  const finish = () => {
+  const finish = async () => {
     if (done) return;
     done = true;
     const newName = input.value.trim() || oldName;
@@ -846,7 +867,7 @@ function startProjectRename(oldName, nameSpan) {
       else           appData.projectOrder[idx] = newName;
     }
 
-    saveData();
+    await saveData();
     render();
   };
 
@@ -977,7 +998,7 @@ function startDragMove(e, item, bar) {
     bar.dataset.pendingStart = newStart;
   };
 
-  const onUp = () => {
+  const onUp = async () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
     bar.classList.remove('dragging');
@@ -986,7 +1007,7 @@ function startDragMove(e, item, bar) {
     const newStart = parseInt(bar.dataset.pendingStart || origCalMonth);
     if (newStart !== origCalMonth) {
       item.startMonth = newStart;
-      saveData();
+      await saveData();
       render();
     }
     dragState = null;
@@ -1021,7 +1042,7 @@ function startDragResize(e, item, bar) {
     bar.dataset.pendingDur = newDur;
   };
 
-  const onUp = () => {
+  const onUp = async () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
     bar.classList.remove('resizing');
@@ -1030,7 +1051,7 @@ function startDragResize(e, item, bar) {
     const newDur = parseInt(bar.dataset.pendingDur || origDur);
     if (newDur !== origDur) {
       item.duration = newDur;
-      saveData();
+      await saveData();
       render();
     }
     dragState = null;
@@ -1304,21 +1325,21 @@ function normaliseItem(it) {
   return it;
 }
 
-function importCSV(text) {
+async function importCSV(text) {
   const rows = parseCSV(text);
   if (!rows.length) throw new Error('CSV 无有效数据行');
   appData.items = rows.map(normaliseItem);
   appData.moduleOrder = []; // derive fresh order from import sequence
-  saveData();
+  await saveData();
   render();
 }
 
-function importCSVAppend(text) {
+async function importCSVAppend(text) {
   const rows = parseCSV(text);
   if (!rows.length) throw new Error('CSV 无有效数据行');
   const newItems = rows.map(normaliseItem);
   appData.items = appData.items.concat(newItems);
-  saveData();
+  await saveData();
   render();
 }
 
@@ -1400,7 +1421,7 @@ function startModuleRename(oldName, nameSpan) {
   input.select();
 
   let done = false;
-  const finish = () => {
+  const finish = async () => {
     if (done) return;
     done = true;
     const newName = input.value.trim() || oldName;
@@ -1422,7 +1443,7 @@ function startModuleRename(oldName, nameSpan) {
       else           appData.moduleOrder[idx] = newName;
     }
 
-    saveData();
+    await saveData();
     render();
   };
 
@@ -1464,7 +1485,7 @@ function startModuleDrag(e, moduleName) {
     moduleDragState.targetIdx = targetIdx;
   };
 
-  const onUp = () => {
+  const onUp = async () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
     document.body.style.cursor = '';
@@ -1482,7 +1503,7 @@ function startModuleDrag(e, moduleName) {
     const insertAt = targetIdx > origIdx ? targetIdx - 1 : targetIdx;
     mods.splice(insertAt, 0, moduleName);
     appData.moduleOrder = mods;
-    saveData();
+    await saveData();
     render();
   };
 
@@ -1520,8 +1541,8 @@ function esc(str) {
 //  Init
 // ============================================================
 
-function init() {
-  loadData();
+async function init() {
+  await loadData();
   updateVersionIndicator();
   render();
 
@@ -1566,17 +1587,17 @@ function init() {
   document.getElementById('btn-cancel').addEventListener('click',      closeModal);
 
   // Modal delete
-  document.getElementById('btn-delete').addEventListener('click', () => {
+  document.getElementById('btn-delete').addEventListener('click', async () => {
     if (!editingItemId) return;
     if (!confirm('确认删除该条目？')) return;
     appData.items = appData.items.filter(i => i.id !== editingItemId);
-    saveData();
+    await saveData();
     closeModal();
     render();
   });
 
   // Form submit
-  document.getElementById('item-form').addEventListener('submit', (e) => {
+  document.getElementById('item-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form       = e.target;
     const startMonth = clamp(parseInt(form.startMonth.value) || 1, 1, 12);
@@ -1622,7 +1643,7 @@ function init() {
       });
     }
 
-    saveData();
+    await saveData();
     closeModal();
     render();
   });
@@ -1766,4 +1787,4 @@ function init() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => init());
